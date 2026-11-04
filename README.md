@@ -41,3 +41,14 @@ Add Isolate_ID before production use: Sample_ID alone may not uniquely identify 
 ## Important
 
 The current import runs in the browser and replaces the in-memory demo rows for that session only. Do not upload identifiable patient data. Do not use demo data for clinical or management decisions.
+
+
+## Persistence and future integrations
+
+An initial Cloudflare D1 schema is available in `migrations/0001_initial_schema.sql`. It covers facilities, isolate-level AST results, WGS metadata, IPC visits and assessments, recommendations, legal acts, import batches, external sync runs, and audit events.
+
+The data integration contracts in `src/lib/data-integration.ts` define a provider-neutral import boundary for Excel and a future Google Sheets adapter.
+
+These files are preparation only: the Worker is not yet connected to D1 or R2, and Google Sheets is not connected. The current browser-side import remains session-only until the Cloudflare resources, API, authentication, and server-side persistence are configured.
+
+Before operational use, create D1 and R2 resources in Cloudflare, add their real bindings/secrets, implement and test the API, and complete the security and privacy review. Do not upload identifiable patient data to the current prototype.
