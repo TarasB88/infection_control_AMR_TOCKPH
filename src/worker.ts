@@ -20,9 +20,7 @@ interface LocalD1Database {
 interface WorkerEnv {
   DB?: LocalD1Database;
   ASSETS?: { fetch(request: Request): Promise<Response> };
-  ACCESS_TEAM_DOMAIN?: string;
-  ACCESS_AUD?: string;
-  INITIAL_ADMIN_EMAIL?: string;
+  INITIAL_ADMIN_SETUP_TOKEN?: string;
   PATIENT_HMAC_SECRET?: string;
 }
 
@@ -91,102 +89,117 @@ const hmacPatientId = async (value: string, secret: string): Promise<string> => 
   return Array.from(new Uint8Array(signature), byte => byte.toString(16).padStart(2, '0')).join('');
 };
 
-type AccessJwk = JsonWebKey & { kid?: string };
-type AccessJwtPayload = { aud?: string | string[]; iss?: string; exp?: number; nbf?: number; email?: string; name?: string; sub?: string };
 type UserRole = 'admin' | 'operator' | 'analyst';
 type UserProfileRow = { id: string; email: string; full_name: string; role: UserRole; is_active: number; all_facilities: number };
-type AuthenticatedUser = UserProfileRow & { facilityCodes: string[] };
-type AccessResult = { identity: { email: string; name: string }; error?: never } | { identity?: never; error: Response };
-
-let accessJwksCache: AccessJwk[] = [];
-let accessJwksCachedAt = 0;
-
-const decodeBase64Url = (value: string): Uint8Array => {
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-  const binary = atob(padded);
-  return Uint8Array.from(binary, character => character.charCodeAt(0));
-};
-
-const decodeJwtJson = <T,>(value: string): T =>
-  JSON.parse(new TextDecoder().decode(decodeBase64Url(value))) as T;
-
+type AuthenticatedUser = UserProfileRow & { facilityCodes: string[]; sessionId: string; csrfToken: string };
+type AuthResult = { user: AuthenticatedUser; error?: never } | { user?: never; error: Response };
+const SESSION_TTL_SECONDS = 8 * 60 * 60;
+const PASSWORD_ITERATIONS = 310000;
+const COOKIE_NAME = '__Host-ic_session';
 const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   return buffer;
 };
-
-const getAccessJwks = async (domain: string): Promise<AccessJwk[]> => {
-  const now = Date.now();
-  if (accessJwksCache.length && now - accessJwksCachedAt < 300000) return accessJwksCache;
-  const response = await fetch('https://' + domain + '/cdn-cgi/access/certs', { headers: { accept: 'application/json' } });
-  if (!response.ok) throw new Error('Access certificates unavailable');
-  const body = await response.json() as { keys?: AccessJwk[] };
-  if (!Array.isArray(body.keys) || body.keys.length === 0) throw new Error('Access certificate set is empty');
-  accessJwksCache = body.keys;
-  accessJwksCachedAt = now;
-  return accessJwksCache;
+const randomToken = (length = 32): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 };
-
-const verifyAccessIdentity = async (request: Request, env: WorkerEnv): Promise<AccessResult> => {
-  const domain = text(env.ACCESS_TEAM_DOMAIN).replace(/^https?:\/\//i, '').replace(/\/+$/, '').toLowerCase();
-  const audience = text(env.ACCESS_AUD);
-  if (!domain || !audience) return { error: json({ error: 'access_not_configured', message: 'Не налаштовано ACCESS_TEAM_DOMAIN та ACCESS_AUD у Worker.' }, 503) };
-  const token = request.headers.get('cf-access-jwt-assertion') ?? '';
-  if (!token) return { error: json({ error: 'access_login_required', message: 'Потрібна авторизація через Cloudflare Access.' }, 401) };
-  const parts = token.split('.');
-  if (parts.length !== 3) return { error: json({ error: 'invalid_access_token' }, 401) };
-
-  try {
-    const header = decodeJwtJson<{ alg?: string; kid?: string }>(parts[0]);
-    const payload = decodeJwtJson<AccessJwtPayload>(parts[1]);
-    if (header.alg !== 'RS256' || !header.kid) return { error: json({ error: 'invalid_access_token' }, 401) };
-    const now = Math.floor(Date.now() / 1000);
-    const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud ?? ''];
-    if (payload.iss !== 'https://' + domain || !audiences.includes(audience) ||
-        !payload.exp || payload.exp <= now || (payload.nbf !== undefined && payload.nbf > now) || !payload.email) {
-      return { error: json({ error: 'access_claims_invalid' }, 401) };
-    }
-
-    let jwk = (await getAccessJwks(domain)).find(key => key.kid === header.kid);
-    if (!jwk) {
-      accessJwksCachedAt = 0;
-      jwk = (await getAccessJwks(domain)).find(key => key.kid === header.kid);
-    }
-    if (!jwk) return { error: json({ error: 'access_signing_key_not_found' }, 401) };
-    const publicKey = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
-    const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, toArrayBuffer(decodeBase64Url(parts[2])), toArrayBuffer(new TextEncoder().encode(parts[0] + '.' + parts[1])));
-    if (!valid) return { error: json({ error: 'access_signature_invalid' }, 401) };
-    return { identity: { email: payload.email.trim().toLowerCase(), name: text(payload.name) || payload.email.trim() } };
-  } catch {
-    return { error: json({ error: 'access_verification_failed', message: 'Не вдалося перевірити Cloudflare Access JWT. Перевірте домен команди й сертифікати.' }, 503) };
-  }
+const hashPassword = async (password: string, saltHex: string): Promise<string> => {
+  const salt = Uint8Array.from(saltHex.match(/.{2}/g) ?? [], part => parseInt(part, 16));
+  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: toArrayBuffer(salt), iterations: PASSWORD_ITERATIONS }, material, 256);
+  return Array.from(new Uint8Array(bits), b => b.toString(16).padStart(2, '0')).join('');
 };
-
-const getAuthenticatedUser = async (request: Request, env: WorkerEnv):
-  Promise<{ user: AuthenticatedUser; error?: never } | { user?: never; error: Response }> => {
-  const verified = await verifyAccessIdentity(request, env);
-  if (verified.error) return { error: verified.error };
+const parseCookies = (header: string): Record<string,string> => Object.fromEntries(header.split(';').map(part => {
+  const index = part.indexOf('=');
+  return index < 0 ? ['', ''] : [part.slice(0,index).trim(), part.slice(index+1).trim()];
+}).filter(([key]) => key));
+const sessionCookie = (token: string, maxAge: number) => `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+const requireSameOrigin = (request: Request): boolean => {
+  const origin = request.headers.get('origin');
+  return !origin || origin === new URL(request.url).origin;
+};
+const getAuthenticatedUser = async (request: Request, env: WorkerEnv): Promise<AuthResult> => {
   if (!env.DB) return { error: json({ error: 'database_unavailable' }, 503) };
-  const email = verified.identity.email;
-  const initialAdminEmail = text(env.INITIAL_ADMIN_EMAIL).toLowerCase();
-  if (initialAdminEmail && email === initialAdminEmail) {
-    const bootstrapId = 'usr_' + (await sha256(email)).slice(0, 40);
-    await env.DB.prepare(
-      'INSERT INTO user_profiles (id, email, full_name, role, is_active, all_facilities) VALUES (?, ?, ?, ?, 1, 1) ON CONFLICT(email) DO NOTHING',
-    ).bind(bootstrapId, email, verified.identity.name, 'admin').run();
+  const token = parseCookies(request.headers.get('cookie') ?? '')[COOKIE_NAME];
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) return { error: json({ error: 'login_required', message: 'Увійдіть до системи.' }, 401) };
+  const tokenHash = await sha256(token);
+  const session = await env.DB.prepare(
+    `SELECT s.id AS session_id, s.csrf_token, s.expires_at, u.id, u.email, u.full_name, u.role, u.is_active, u.all_facilities
+     FROM user_sessions s JOIN user_profiles u ON u.id=s.user_id
+     WHERE s.token_hash=? AND s.expires_at > datetime('now')`,
+  ).bind(tokenHash).first<UserProfileRow & { session_id:string; csrf_token:string; expires_at:string }>();
+  if (!session) return { error: json({ error: 'session_expired', message: 'Сеанс завершився. Увійдіть повторно.' }, 401) };
+  if (session.is_active !== 1) return { error: json({ error: 'profile_inactive', message: 'Обліковий запис деактивовано.' }, 403) };
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    if (!requireSameOrigin(request)) return { error: json({ error: 'origin_denied' }, 403) };
+    if (!constantTimeEqual(request.headers.get('x-csrf-token') ?? '', session.csrf_token)) return { error: json({ error: 'csrf_failed', message: 'Не пройдено перевірку запиту. Оновіть сторінку.' }, 403) };
   }
-  const profile = await env.DB.prepare(
-    'SELECT id, email, full_name, role, is_active, all_facilities FROM user_profiles WHERE email = ? COLLATE NOCASE',
-  ).bind(email).first<UserProfileRow>();
-  if (!profile) return { error: json({ error: 'profile_not_provisioned', message: 'Ваш профіль ще не створено адміністратором системи.' }, 403) };
-  if (profile.is_active !== 1) return { error: json({ error: 'profile_inactive', message: 'Обліковий запис деактивовано.' }, 403) };
-  const scope = await env.DB.prepare('SELECT facility_code FROM user_facility_access WHERE user_id = ? ORDER BY facility_code')
-    .bind(profile.id).all<{ facility_code: string }>();
-  return { user: { ...profile, facilityCodes: (scope.results ?? []).map(item => item.facility_code) } };
+  const scope = await env.DB.prepare('SELECT facility_code FROM user_facility_access WHERE user_id=? ORDER BY facility_code')
+    .bind(session.id).all<{facility_code:string}>();
+  return { user: { id:session.id, email:session.email, full_name:session.full_name, role:session.role, is_active:session.is_active, all_facilities:session.all_facilities, facilityCodes:(scope.results??[]).map(x=>x.facility_code), sessionId:session.session_id, csrfToken:session.csrf_token } };
 };
-
+const publicUser = (user: AuthenticatedUser) => ({
+  id:user.id, email:user.email, fullName:user.full_name, role:user.role,
+  isActive:user.is_active===1, allFacilities:user.all_facilities===1 || user.role==='admin',
+  facilityCodes:user.facilityCodes,
+});
+const handleInitialSetup = async (request:Request, env:WorkerEnv):Promise<Response> => {
+  if (request.method!=='POST') return json({error:'method_not_allowed'},405);
+  if (!requireSameOrigin(request)) return json({error:'origin_denied'},403);
+  if (!env.DB || !env.INITIAL_ADMIN_SETUP_TOKEN || env.INITIAL_ADMIN_SETUP_TOKEN.length<32) return json({error:'setup_not_configured',message:'Адміністратор має налаштувати одноразовий токен початкового створення.'},503);
+  let body:{setupToken?:unknown;email?:unknown;fullName?:unknown;password?:unknown};
+  try { body=await request.json() as typeof body; } catch { return json({error:'invalid_json'},400); }
+  if (!constantTimeEqual(text(body.setupToken),env.INITIAL_ADMIN_SETUP_TOKEN)) return json({error:'setup_token_invalid'},403);
+  const count=await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles').first<{total:number}>();
+  if ((count?.total??0)!==0) return json({error:'setup_already_completed',message:'Початкове створення адміністратора вже виконано.'},409);
+  const email=text(body.email).toLowerCase(), fullName=text(body.fullName), password=text(body.password);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({error:'invalid_email'},400);
+  if (fullName.length<3 || fullName.length>160) return json({error:'invalid_full_name'},400);
+  if (password.length<12 || password.length>128) return json({error:'weak_password',message:'Пароль має містити щонайменше 12 символів.'},400);
+  const salt=randomToken(16), passwordHash=await hashPassword(password,salt), id=crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO user_profiles (id,email,full_name,role,is_active,all_facilities,password_salt,password_hash) VALUES (?,?,?,\'admin\',1,1,?,?)')
+    .bind(id,email,fullName,salt,passwordHash).run();
+  await env.DB.prepare('INSERT INTO audit_log (id,actor_id,action,entity_type,entity_id,details_json) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(),id,'initial_admin_created','user_profile',id,JSON.stringify({email})).run();
+  return json({status:'created',message:'Початкового адміністратора створено. Тепер увійдіть у систему.'},201);
+};
+const handleLogin = async (request:Request, env:WorkerEnv):Promise<Response> => {
+  if (request.method!=='POST') return json({error:'method_not_allowed'},405);
+  if (!requireSameOrigin(request)) return json({error:'origin_denied'},403);
+  if (!env.DB) return json({error:'database_unavailable'},503);
+  let body:{email?:unknown;password?:unknown};
+  try { body=await request.json() as typeof body; } catch { return json({error:'invalid_json'},400); }
+  const email=text(body.email).toLowerCase(), password=String(body.password??'');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length>128) return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
+  const attempts=await env.DB.prepare("SELECT COUNT(*) AS total FROM login_attempts WHERE email=? AND attempted_at > datetime('now','-15 minutes')").bind(email).first<{total:number}>();
+  if ((attempts?.total??0)>=8) return json({error:'login_rate_limited',message:'Забагато невдалих спроб. Спробуйте через 15 хвилин.'},429);
+  const profile=await env.DB.prepare('SELECT id,email,full_name,role,is_active,all_facilities,password_salt,password_hash FROM user_profiles WHERE email=? COLLATE NOCASE').bind(email)
+    .first<UserProfileRow & {password_salt:string|null;password_hash:string|null}>();
+  const salt=profile?.password_salt || '00000000000000000000000000000000';
+  const candidate=await hashPassword(password,salt);
+  if (!profile || profile.is_active!==1 || !profile.password_hash || !constantTimeEqual(candidate,profile.password_hash)) {
+    await env.DB.prepare('INSERT INTO login_attempts (email,attempted_at) VALUES (?,CURRENT_TIMESTAMP)').bind(email).run();
+    return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
+  }
+  await env.DB.prepare('DELETE FROM login_attempts WHERE email=?').bind(email).run();
+  const token=randomToken(), csrfToken=randomToken(24), sessionId=crypto.randomUUID();
+  await env.DB.prepare("INSERT INTO user_sessions (id,user_id,token_hash,csrf_token,expires_at) VALUES (?,?,?,?,datetime('now',?))")
+    .bind(sessionId,profile.id,await sha256(token),csrfToken,`+${SESSION_TTL_SECONDS} seconds`).run();
+  await env.DB.prepare('INSERT INTO audit_log (id,actor_id,action,entity_type,entity_id,details_json) VALUES (?,?,?,?,?,?)')
+    .bind(crypto.randomUUID(),profile.id,'login','user_session',sessionId,JSON.stringify({email})).run();
+  return new Response(JSON.stringify({user:publicUser({...profile,facilityCodes:[],sessionId,csrfToken})}),{status:200,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','set-cookie':sessionCookie(token,SESSION_TTL_SECONDS),'x-content-type-options':'nosniff'}});
+};
+const handleLogout = async (request:Request, env:WorkerEnv):Promise<Response> => {
+  const auth=await getAuthenticatedUser(request,env);
+  if (auth.error) return new Response(JSON.stringify({status:'signed_out'}),{status:200,headers:{'content-type':'application/json','set-cookie':sessionCookie('',0),'cache-control':'no-store'}});
+  await env.DB!.prepare('DELETE FROM user_sessions WHERE id=?').bind(auth.user.sessionId).run();
+  await env.DB!.prepare('INSERT INTO audit_log (id,actor_id,action,entity_type,entity_id,details_json) VALUES (?,?,?,?,?,?)')
+    .bind(crypto.randomUUID(),auth.user.id,'logout','user_session',auth.user.sessionId,'{}').run();
+  return new Response(JSON.stringify({status:'signed_out'}),{status:200,headers:{'content-type':'application/json','set-cookie':sessionCookie('',0),'cache-control':'no-store'}});
+};
+const userCanWrite = (user: AuthenticatedUser): boolean => user.role === 'admin' || user.role === 'operator';
 const userCanWrite = (user: AuthenticatedUser): boolean => user.role === 'admin' || user.role === 'operator';
 const userCanAccessFacility = (user: AuthenticatedUser, code: string): boolean =>
   user.role === 'admin' || user.all_facilities === 1 || user.facilityCodes.includes(code);
@@ -426,10 +439,14 @@ export default {
       }
     }
 
+    if (url.pathname === '/api/auth/setup') return handleInitialSetup(request, env);
+    if (url.pathname === '/api/auth/login') return handleLogin(request, env);
+    if (url.pathname === '/api/auth/logout' && request.method === 'POST') return handleLogout(request, env);
+
     if (url.pathname === '/api/auth/me' && request.method === 'GET') {
       const authenticated = await getAuthenticatedUser(request, env);
       if (authenticated.error) return authenticated.error;
-      return json({ user: publicUser(authenticated.user) });
+      return json({ user: publicUser(authenticated.user), csrfToken: authenticated.user.csrfToken });
     }
 
     if (url.pathname === '/api/admin/users') {
