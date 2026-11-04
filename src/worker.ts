@@ -483,6 +483,7 @@ export default {
         ? ''
         : codes.length ? 'WHERE f.external_code IN (' + codes.map(() => '?').join(',') + ')' : 'WHERE 1 = 0';
       try {
+        // Build SQL from plain string fragments to avoid malformed template-literal escaping in CI builds.
         const sql = [
           'SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,',
           'i.hromada AS Territorial_Hromada, i.settlement AS Settlement,',
