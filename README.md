@@ -57,3 +57,5 @@ Before operational use, create D1 and R2 resources in Cloudflare, add their real
 ## AMR AST persistence API
 
 The Worker now exposes an authenticated `POST /api/amr/ast/import` endpoint for AST imports into Cloudflare D1. It validates the 16-column AST payload, stores facilities, isolates and AST results, records import/audit metadata, and pseudonymizes `Patient_ID` server-side with HMAC-SHA-256. Configure `API_TOKEN` and `PATIENT_HMAC_SECRET` as Worker secrets and apply the D1 migration before enabling real-data imports. See [docs/AMR_AST_API.md](docs/AMR_AST_API.md). The AMR page accepts the API token in memory for the current browser session; it is not stored in localStorage.
+
+The API also provides authenticated `GET /api/amr/ast` retrieval (maximum 1,000 records per page); the AMR interface includes controls for importing into D1 and reloading persisted results. Partial validation outcomes are recorded using the schema-supported `validated` batch status.
