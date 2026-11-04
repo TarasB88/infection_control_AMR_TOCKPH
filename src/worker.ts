@@ -137,7 +137,7 @@ const getAuthenticatedUser = async (request: Request, env: WorkerEnv): Promise<A
     .bind(session.id).all<{facility_code:string}>();
   return { user: { id:session.id, email:session.email, full_name:session.full_name, role:session.role, is_active:session.is_active, all_facilities:session.all_facilities, facilityCodes:(scope.results??[]).map(x=>x.facility_code), sessionId:session.session_id, csrfToken:session.csrf_token } };
 };
-const publicUser = (user: AuthenticatedUser) => ({
+const publicUser = (user: Pick<AuthenticatedUser, 'id' | 'email' | 'full_name' | 'role' | 'is_active' | 'all_facilities' | 'facilityCodes'>) => ({
   id:user.id, email:user.email, fullName:user.full_name, role:user.role,
   isActive:user.is_active===1, allFacilities:user.all_facilities===1 || user.role==='admin',
   facilityCodes:user.facilityCodes,
