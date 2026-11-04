@@ -500,7 +500,7 @@ export default {
           'LIMIT ? OFFSET ?',
         ].filter(Boolean).join(' ');
         const result = await env.DB.prepare(sql)
-        ).bind(...codes, limit, offset).all<AstRow>();
+          .bind(...codes, limit, offset).all<AstRow>();
         return json({ rows: result.results ?? [], count: result.results?.length ?? 0, limit, offset });
       } catch {
         return json({ error: 'query_failed', message: 'Не вдалося прочитати AST з D1.' }, 500);
