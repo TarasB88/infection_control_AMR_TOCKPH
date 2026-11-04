@@ -27,7 +27,7 @@ See [Authentication and user profiles](docs/AUTHENTICATION_AND_USER_PROFILES.md)
 
 1. Apply D1 migrations `0002_user_profiles.sql` and `0003_password_sessions.sql`.
 2. Add the one-time Production secret `INITIAL_ADMIN_SETUP_TOKEN`.
-3. Deploy the current `main` branch.
+3. Deploy the current `main` branch through the connected Cloudflare Git integration (`npm run build`, then `npx wrangler deploy`). Verify the deployed commit SHA in the Cloudflare deployment details.
 4. Create the first administrator from the first-run setup form.
 5. Remove `INITIAL_ADMIN_SETUP_TOKEN` after successful setup.
 6. Keep the existing `PATIENT_HMAC_SECRET` unchanged.
