@@ -199,12 +199,6 @@ const handleLogout = async (request:Request, env:WorkerEnv):Promise<Response> =>
 const userCanWrite = (user: AuthenticatedUser): boolean => user.role === 'admin' || user.role === 'operator';
 const userCanAccessFacility = (user: AuthenticatedUser, code: string): boolean =>
   user.role === 'admin' || user.all_facilities === 1 || user.facilityCodes.includes(code);
-const publicUser = (user: AuthenticatedUser) => ({
-  id: user.id, email: user.email, fullName: user.full_name, role: user.role,
-  isActive: user.is_active === 1, allFacilities: user.all_facilities === 1 || user.role === 'admin',
-  facilityCodes: user.facilityCodes,
-});
-
 const handleAdminUsers = async (request: Request, env: WorkerEnv, actor: AuthenticatedUser): Promise<Response> => {
   if (actor.role !== 'admin') return json({ error: 'forbidden', message: 'Потрібна роль адміністратора.' }, 403);
   if (!env.DB) return json({ error: 'database_unavailable' }, 503);
