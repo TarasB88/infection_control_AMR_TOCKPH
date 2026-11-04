@@ -20,6 +20,8 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
     "wrangler": "latest"
   }
 }
