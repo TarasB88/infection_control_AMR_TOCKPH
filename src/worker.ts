@@ -446,7 +446,7 @@ export default {
         : codes.length ? 'WHERE f.external_code IN (' + codes.map(() => '?').join(',') + ')' : 'WHERE 1 = 0';
       try {
         const result = await env.DB.prepare(
-          \`SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,
+          `SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,
              i.hromada AS Territorial_Hromada, i.settlement AS Settlement,
              COALESCE(i.pseudonymous_patient_id, '') AS Patient_ID, i.sample_id AS Sample_ID,
              i.sampling_date AS Sampling_Date, i.sample_matrix_type AS Sample_Matrix_Type,
@@ -457,9 +457,9 @@ export default {
            FROM ast_results a
            INNER JOIN isolates i ON i.id = a.isolate_id
            INNER JOIN facilities f ON f.id = i.facility_id
-           \${scopeSql}
+           ${scopeSql}
            ORDER BY i.sampling_date DESC, i.sample_id
-           LIMIT ? OFFSET ?\`,
+           LIMIT ? OFFSET ?`,
         ).bind(...codes, limit, offset).all<AstRow>();
         return json({ rows: result.results ?? [], count: result.results?.length ?? 0, limit, offset });
       } catch {
