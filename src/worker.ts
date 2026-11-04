@@ -439,6 +439,11 @@ export default {
       }
     }
 
+    if (url.pathname === '/api/auth/status' && request.method === 'GET') {
+      if (!env.DB) return json({ error: 'database_unavailable' }, 503);
+      const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles').first<{total:number}>();
+      return json({ setupRequired: (count?.total ?? 0) === 0, setupTokenConfigured: Boolean(env.INITIAL_ADMIN_SETUP_TOKEN) });
+    }
     if (url.pathname === '/api/auth/setup') return handleInitialSetup(request, env);
     if (url.pathname === '/api/auth/login') return handleLogin(request, env);
     if (url.pathname === '/api/auth/logout' && request.method === 'POST') return handleLogout(request, env);
