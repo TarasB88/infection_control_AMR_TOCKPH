@@ -111,6 +111,12 @@ const decodeBase64Url = (value: string): Uint8Array => {
 const decodeJwtJson = <T,>(value: string): T =>
   JSON.parse(new TextDecoder().decode(decodeBase64Url(value))) as T;
 
+const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+};
+
 const getAccessJwks = async (domain: string): Promise<AccessJwk[]> => {
   const now = Date.now();
   if (accessJwksCache.length && now - accessJwksCachedAt < 300000) return accessJwksCache;
@@ -150,7 +156,7 @@ const verifyAccessIdentity = async (request: Request, env: WorkerEnv): Promise<A
     }
     if (!jwk) return { error: json({ error: 'access_signing_key_not_found' }, 401) };
     const publicKey = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
-    const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, decodeBase64Url(parts[2]), new TextEncoder().encode(parts[0] + '.' + parts[1]));
+    const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, toArrayBuffer(decodeBase64Url(parts[2])), toArrayBuffer(new TextEncoder().encode(parts[0] + '.' + parts[1])));
     if (!valid) return { error: json({ error: 'access_signature_invalid' }, 401) };
     return { identity: { email: payload.email.trim().toLowerCase(), name: text(payload.name) || payload.email.trim() } };
   } catch {
