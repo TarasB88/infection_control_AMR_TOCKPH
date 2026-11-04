@@ -116,10 +116,7 @@ const parseCookies = (header: string): Record<string,string> => Object.fromEntri
   return index < 0 ? ['', ''] : [part.slice(0,index).trim(), part.slice(index+1).trim()];
 }).filter(([key]) => key));
 const sessionCookie = (token: string, maxAge: number) => `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
-const requireSameOrigin = (request: Request): boolean => {
-  const origin = request.headers.get('origin');
-  return !origin || origin === new URL(request.url).origin;
-};
+const requireSameOrigin = (request: Request): boolean => request.headers.get('origin') === new URL(request.url).origin;
 const getAuthenticatedUser = async (request: Request, env: WorkerEnv): Promise<AuthResult> => {
   if (!env.DB) return { error: json({ error: 'database_unavailable' }, 503) };
   const token = parseCookies(request.headers.get('cookie') ?? '')[COOKIE_NAME];
@@ -200,7 +197,6 @@ const handleLogout = async (request:Request, env:WorkerEnv):Promise<Response> =>
   return new Response(JSON.stringify({status:'signed_out'}),{status:200,headers:{'content-type':'application/json','set-cookie':sessionCookie('',0),'cache-control':'no-store'}});
 };
 const userCanWrite = (user: AuthenticatedUser): boolean => user.role === 'admin' || user.role === 'operator';
-const userCanWrite = (user: AuthenticatedUser): boolean => user.role === 'admin' || user.role === 'operator';
 const userCanAccessFacility = (user: AuthenticatedUser, code: string): boolean =>
   user.role === 'admin' || user.all_facilities === 1 || user.facilityCodes.includes(code);
 const publicUser = (user: AuthenticatedUser) => ({
@@ -236,14 +232,13 @@ const handleAdminUsers = async (request: Request, env: WorkerEnv, actor: Authent
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: 'invalid_email' }, 400);
   if (!['admin', 'operator', 'analyst'].includes(role)) return json({ error: 'invalid_role' }, 400);
   if (facilityCodes.length > 500 || facilityCodes.some(code => code.length > 120)) return json({ error: 'invalid_facility_scope' }, 400);
+  const existing = await env.DB.prepare('SELECT id, role, is_active FROM user_profiles WHERE email = ? COLLATE NOCASE')
+    .bind(email).first<{ id: string; role: UserRole; is_active: number }>();
+  const userId = existing?.id ?? crypto.randomUUID();
   const password = typeof body.password === 'string' ? body.password : '';
   if ((!existing && password.length < 12) || (password && (password.length < 12 || password.length > 128))) {
     return json({ error: 'invalid_password', message: 'Для нового профілю задайте пароль від 12 до 128 символів. Для оновлення залиште поле порожнім, якщо пароль змінювати не потрібно.' }, 400);
   }
-
-  const existing = await env.DB.prepare('SELECT id, role, is_active FROM user_profiles WHERE email = ? COLLATE NOCASE')
-    .bind(email).first<{ id: string; role: UserRole; is_active: number }>();
-  const userId = existing?.id ?? crypto.randomUUID();
   if (email === actor.email && (role !== 'admin' || !isActive)) return json({ error: 'cannot_remove_own_admin_access' }, 409);
   if (existing?.role === 'admin' && existing.is_active === 1 && (role !== 'admin' || !isActive)) {
     const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles WHERE role = ? AND is_active = 1')
