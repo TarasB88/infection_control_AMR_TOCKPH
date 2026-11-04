@@ -158,7 +158,6 @@ const importAst = async (request: Request, env: WorkerEnv): Promise<Response> =>
   const rejectedRows = rawCount - rows.length;
   const batchId = crypto.randomUUID();
   const sourceName = text(payload.sourceName).slice(0, 250) || 'AST import';
-  const now = new Date().toISOString();
 
   try {
     await env.DB.prepare(
@@ -227,7 +226,7 @@ const importAst = async (request: Request, env: WorkerEnv): Promise<Response> =>
     await env.DB.prepare(
       `INSERT INTO audit_log (id, action, entity_type, entity_id, details_json)
        VALUES (?, 'import', 'amr_ast_batch', ?, ?)`,
-    ).bind(crypto.randomUUID(), batchId, JSON.stringify({ rowsReceived: rawCount, rowsProcessed: rows.length, rowsRejected: issues.length })).run();
+    ).bind(crypto.randomUUID(), batchId, JSON.stringify({ rowsReceived: rawCount, rowsProcessed: rows.length, rowsRejected: rejectedRows })).run();
 
     return json({
       batchId,
