@@ -225,7 +225,7 @@ const handleAdminUsers = async (request: Request, env: WorkerEnv, actor: Authent
     })) });
   }
   if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-  let body: { email?: unknown; fullName?: unknown; role?: unknown; isActive?: unknown; allFacilities?: unknown; facilityCodes?: unknown };
+  let body: { email?: unknown; fullName?: unknown; role?: unknown; isActive?: unknown; allFacilities?: unknown; facilityCodes?: unknown; password?: unknown };
   try { body = await request.json() as typeof body; } catch { return json({ error: 'invalid_json' }, 400); }
   const email = text(body.email).toLowerCase();
   const fullName = text(body.fullName) || email;
@@ -236,6 +236,10 @@ const handleAdminUsers = async (request: Request, env: WorkerEnv, actor: Authent
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: 'invalid_email' }, 400);
   if (!['admin', 'operator', 'analyst'].includes(role)) return json({ error: 'invalid_role' }, 400);
   if (facilityCodes.length > 500 || facilityCodes.some(code => code.length > 120)) return json({ error: 'invalid_facility_scope' }, 400);
+  const password = typeof body.password === 'string' ? body.password : '';
+  if ((!existing && password.length < 12) || (password && (password.length < 12 || password.length > 128))) {
+    return json({ error: 'invalid_password', message: 'Для нового профілю задайте пароль від 12 до 128 символів. Для оновлення залиште поле порожнім, якщо пароль змінювати не потрібно.' }, 400);
+  }
 
   const existing = await env.DB.prepare('SELECT id, role, is_active FROM user_profiles WHERE email = ? COLLATE NOCASE')
     .bind(email).first<{ id: string; role: UserRole; is_active: number }>();
@@ -255,6 +259,11 @@ const handleAdminUsers = async (request: Request, env: WorkerEnv, actor: Authent
     env.DB.prepare('INSERT INTO audit_log (id, actor_id, action, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?, ?)')
       .bind(crypto.randomUUID(), actor.id, 'user_profile_upsert', 'user_profile', userId, JSON.stringify({ email, role, isActive, allFacilities, facilityCodesCount: facilityCodes.length })),
   ];
+  if (password) {
+    const salt = randomToken(16);
+    const passwordHash = await hashPassword(password, salt);
+    statements.push(env.DB.prepare('UPDATE user_profiles SET password_salt=?, password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(salt, passwordHash, userId));
+  }
   await env.DB.batch(statements);
   const saved = await env.DB.prepare('SELECT id, email, full_name, role, is_active, all_facilities FROM user_profiles WHERE id = ?')
     .bind(userId).first<UserProfileRow>();
