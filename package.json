@@ -10,18 +10,19 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "lucide-react": "^0.468.0",
-    "recharts": "^2.15.0",
-    "xlsx": "^0.18.5"
+    "@vitejs/plugin-react": "6.2.1",
+    "vite": "8.3.5",
+    "typescript": "7.0.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "lucide-react": "0.468.0",
+    "recharts": "2.15.4",
+    "xlsx": "0.18.5"
   },
   "devDependencies": {
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "wrangler": "latest"
-  }
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "wrangler": "4.157.0"
+  },
+  "packageManager": "npm@10.9.9"
 }
