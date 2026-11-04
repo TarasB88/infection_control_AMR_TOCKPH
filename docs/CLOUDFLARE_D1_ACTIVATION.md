@@ -1,52 +1,68 @@
-# Cloudflare D1 activation runbook
+# Cloudflare D1 and Worker deployment
 
-The current production Worker remains assets-only until the D1 database is created and its real ID is available. Do not replace the production `wrangler.jsonc` with a placeholder ID.
+## Current configuration
 
-## 1. Create the D1 database
-From the repository root, with Wrangler authenticated to the intended Cloudflare account:
+The production Worker configuration is `wrangler.jsonc`. It contains the real D1 database binding and the migrations directory. Do not replace it with a placeholder configuration or change the existing database ID.
 
-```bash
-npx wrangler d1 create infection-control-amr-tockph
-```
+- Worker: `infection-control-amr-tockph`
+- D1 binding: `DB`
+- Migration directory: `migrations/`
+- Worker entry point: `src/worker.ts`
+- Frontend assets: `dist/`
 
-Copy the returned `database_id`. Do not share credentials or API tokens.
+## Database migrations
 
-## 2. Configure the Worker
-Use `wrangler.d1.template.jsonc` as the target configuration, replacing `REPLACE_WITH_DATABASE_ID` with the actual ID. The target configuration:
-- enables `src/worker.ts` as the Worker entry point;
-- serves the Vite build from the Workers assets binding;
-- routes `/api/*` through the Worker first;
-- binds D1 as `env.DB`.
+The migration sequence is:
 
-The Worker currently exposes only a read-only `GET /api/health` probe. It deliberately has no public data-write endpoint until authentication and authorization are implemented.
+1. `0001_initial_schema.sql` — base operational schema.
+2. `0002_user_profiles.sql` — user profiles and facility access.
+3. `0003_password_sessions.sql` — password hashes, sessions and login-attempt tracking.
 
-## 3. Apply the migration
-After configuring the real database ID:
-
-```bash
-npx wrangler d1 migrations apply infection-control-amr-tockph --remote
-```
-
-Check the migration status:
+Before applying migrations, inspect the remote migration status:
 
 ```bash
 npx wrangler d1 migrations list infection-control-amr-tockph --remote
 ```
 
-## 4. Deploy and verify
-Build and deploy:
+Apply only migrations that are not already recorded as applied:
 
 ```bash
+npx wrangler d1 migrations apply infection-control-amr-tockph --remote
+```
+
+Do not manually recreate tables or run an already-applied migration. The migrations are additive; preserve existing records.
+
+## Build and deploy
+
+From the repository root:
+
+```bash
+npm install
 npm run build
 npx wrangler deploy
 ```
 
-Then open `/api/health` on the deployed Worker. A successful response must report `status: ok` and `database: connected`.
+The GitHub Actions build validates the TypeScript project and Vite frontend. A successful GitHub build does not itself deploy the Worker.
 
-## Important
-- The template is not production configuration; it contains a placeholder ID.
-- Do not deploy until the actual D1 ID has been inserted.
-- The initial migration is additive and creates the database tables; it does not migrate current browser-session demo rows.
-- The app's existing Excel import is still browser-session-only. Persistence is not enabled until a secure authenticated import API is implemented and verified.
-- Before storing real patient-linked data, implement authentication, role-based access, pseudonymization, audit controls, retention and backup procedures.
-- R2 is not yet bound; large source files and sequencing files must not be uploaded to a public bucket.
+## First administrator
+
+After the required migrations have been applied and the Worker is deployed:
+
+1. Set the temporary Worker secret `INITIAL_ADMIN_SETUP_TOKEN` (at least 32 random characters).
+2. Open the application and complete the first-administrator setup.
+3. Verify that administrator sign-in works.
+4. Remove `INITIAL_ADMIN_SETUP_TOKEN` after successful setup.
+
+Keep the existing `PATIENT_HMAC_SECRET` unchanged. Changing it changes the deterministic pseudonyms generated for patient identifiers.
+
+## Verification
+
+Check:
+
+- `GET /api/health` — Worker and D1 connectivity.
+- `GET /api/auth/status` — first-run setup state.
+- Login, logout, session expiry and role/facility restrictions.
+- AST import and read-back from D1.
+- Audit events and backup/restore procedures.
+
+Do not enter identifiable patient data until access controls, auditability, retention, backup/restore and the lawful basis for processing have been reviewed.
