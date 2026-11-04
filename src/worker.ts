@@ -170,25 +170,30 @@ const handleLogin = async (request:Request, env:WorkerEnv):Promise<Response> => 
   try { body=await request.json() as typeof body; } catch { return json({error:'invalid_json'},400); }
   const email=text(body.email).toLowerCase(), password=String(body.password??'');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length>128) return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
-  await env.DB.prepare("DELETE FROM login_attempts WHERE attempted_at < datetime('now','-1 day')").run();
-  await env.DB.prepare("DELETE FROM user_sessions WHERE expires_at <= datetime('now')").run();
-  const attempts=await env.DB.prepare("SELECT COUNT(*) AS total FROM login_attempts WHERE email=? AND attempted_at > datetime('now','-15 minutes')").bind(email).first<{total:number}>();
-  if ((attempts?.total??0)>=8) return json({error:'login_rate_limited',message:'Забагато невдалих спроб. Спробуйте через 15 хвилин.'},429);
-  const profile=await env.DB.prepare('SELECT id,email,full_name,role,is_active,all_facilities,password_salt,password_hash FROM user_profiles WHERE email=? COLLATE NOCASE').bind(email)
-    .first<UserProfileRow & {password_salt:string|null;password_hash:string|null}>();
-  const salt=profile?.password_salt || '00000000000000000000000000000000';
-  const candidate=await hashPassword(password,salt);
-  if (!profile || profile.is_active!==1 || !profile.password_hash || !constantTimeEqual(candidate,profile.password_hash)) {
-    await env.DB.prepare('INSERT INTO login_attempts (email,attempted_at) VALUES (?,CURRENT_TIMESTAMP)').bind(email).run();
-    return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
+  try {
+    await env.DB.prepare("DELETE FROM login_attempts WHERE attempted_at < datetime('now','-1 day')").run();
+    await env.DB.prepare("DELETE FROM user_sessions WHERE expires_at <= datetime('now')").run();
+    const attempts=await env.DB.prepare("SELECT COUNT(*) AS total FROM login_attempts WHERE email=? AND attempted_at > datetime('now','-15 minutes')").bind(email).first<{total:number}>();
+    if ((attempts?.total??0)>=8) return json({error:'login_rate_limited',message:'Забагато невдалих спроб. Спробуйте через 15 хвилин.'},429);
+    const profile=await env.DB.prepare('SELECT id,email,full_name,role,is_active,all_facilities,password_salt,password_hash FROM user_profiles WHERE email=? COLLATE NOCASE').bind(email)
+      .first<UserProfileRow & {password_salt:string|null;password_hash:string|null}>();
+    const salt=profile?.password_salt || '00000000000000000000000000000000';
+    const candidate=await hashPassword(password,salt);
+    if (!profile || profile.is_active!==1 || !profile.password_hash || !constantTimeEqual(candidate,profile.password_hash)) {
+      await env.DB.prepare('INSERT INTO login_attempts (email,attempted_at) VALUES (?,CURRENT_TIMESTAMP)').bind(email).run();
+      return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
+    }
+    await env.DB.prepare('DELETE FROM login_attempts WHERE email=?').bind(email).run();
+    const token=randomToken(), csrfToken=randomToken(24), sessionId=crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO user_sessions (id,user_id,token_hash,csrf_token,expires_at) VALUES (?,?,?,?,datetime('now',?))")
+      .bind(sessionId,profile.id,await sha256(token),csrfToken,`+${SESSION_TTL_SECONDS} seconds`).run();
+    await env.DB.prepare('INSERT INTO audit_log (id,actor_id,action,entity_type,entity_id,details_json) VALUES (?,?,?,?,?,?)')
+      .bind(crypto.randomUUID(),profile.id,'login','user_session',sessionId,JSON.stringify({email})).run();
+    return new Response(JSON.stringify({user:publicUser({...profile,facilityCodes:[]})}),{status:200,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','set-cookie':sessionCookie(token,SESSION_TTL_SECONDS),'x-content-type-options':'nosniff'}});
+  } catch (error) {
+    console.error('auth_login_failed', error);
+    return json({error:'login_failed',message:'Помилка сервера під час входу. Перевірте журнал Worker.'},500);
   }
-  await env.DB.prepare('DELETE FROM login_attempts WHERE email=?').bind(email).run();
-  const token=randomToken(), csrfToken=randomToken(24), sessionId=crypto.randomUUID();
-  await env.DB.prepare("INSERT INTO user_sessions (id,user_id,token_hash,csrf_token,expires_at) VALUES (?,?,?,?,datetime('now',?))")
-    .bind(sessionId,profile.id,await sha256(token),csrfToken,`+${SESSION_TTL_SECONDS} seconds`).run();
-  await env.DB.prepare('INSERT INTO audit_log (id,actor_id,action,entity_type,entity_id,details_json) VALUES (?,?,?,?,?,?)')
-    .bind(crypto.randomUUID(),profile.id,'login','user_session',sessionId,JSON.stringify({email})).run();
-  return new Response(JSON.stringify({user:publicUser({...profile,facilityCodes:[]})}),{status:200,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','set-cookie':sessionCookie(token,SESSION_TTL_SECONDS),'x-content-type-options':'nosniff'}});
 };
 const handleLogout = async (request:Request, env:WorkerEnv):Promise<Response> => {
   const auth=await getAuthenticatedUser(request,env);
