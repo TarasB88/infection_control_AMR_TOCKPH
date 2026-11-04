@@ -155,6 +155,7 @@ const importAst = async (request: Request, env: WorkerEnv): Promise<Response> =>
   }
 
   const { rows, issues } = validateRows(payload.rows);
+  const rejectedRows = rawCount - rows.length;
   const batchId = crypto.randomUUID();
   const sourceName = text(payload.sourceName).slice(0, 250) || 'AST import';
   const now = new Date().toISOString();
@@ -163,13 +164,13 @@ const importAst = async (request: Request, env: WorkerEnv): Promise<Response> =>
     await env.DB.prepare(
       `INSERT INTO import_batches (id, source_type, source_name, status, rows_received, rows_rejected, validation_summary)
        VALUES (?, 'excel', ?, 'pending', ?, ?, ?)`,
-    ).bind(batchId, sourceName, rawCount, issues.length, JSON.stringify(issues.slice(0, 100))).run();
+    ).bind(batchId, sourceName, rawCount, rejectedRows, JSON.stringify(issues.slice(0, 100))).run();
 
     if (rows.length === 0) {
       await env.DB.prepare(
         `UPDATE import_batches SET status = 'rejected', completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
       ).bind(batchId).run();
-      return json({ batchId, status: 'rejected', rowsReceived: rawCount, rowsInserted: 0, rowsRejected: rawCount, issues }, 422);
+      return json({ batchId, status: 'rejected', rowsReceived: rawCount, rowsInserted: 0, rowsRejected: rejectedRows, issues }, 422);
     }
 
     const statements: LocalD1PreparedStatement[] = [];
@@ -220,7 +221,7 @@ const importAst = async (request: Request, env: WorkerEnv): Promise<Response> =>
     await env.DB.prepare(
       `UPDATE import_batches SET status = ?, rows_inserted = ?, rows_rejected = ?,
        validation_summary = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    ).bind(issues.length ? 'partial' : 'committed', rows.length, issues.length,
+    ).bind(rejectedRows ? 'partial' : 'committed', rows.length, rejectedRows,
       JSON.stringify(issues.slice(0, 100)), batchId).run();
 
     await env.DB.prepare(
@@ -230,10 +231,10 @@ const importAst = async (request: Request, env: WorkerEnv): Promise<Response> =>
 
     return json({
       batchId,
-      status: issues.length ? 'partial' : 'committed',
+      status: rejectedRows ? 'partial' : 'committed',
       rowsReceived: rawCount,
       rowsProcessed: rows.length,
-      rowsRejected: issues.length,
+      rowsRejected: rejectedRows,
       pseudonymizedPatientIds: true,
       issues,
     }, issues.length ? 207 : 201);
