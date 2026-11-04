@@ -89,10 +89,34 @@ const hmacPatientId = async (value: string, secret: string): Promise<string> => 
   return Array.from(new Uint8Array(signature), byte => byte.toString(16).padStart(2, '0')).join('');
 };
 
-const authorized = (request: Request, env: WorkerEnv): boolean => {
-  const token = env.API_TOKEN;
-  const supplied = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
-  return Boolean(token && supplied && constantTimeEqual(supplied, token));
+type AuthorizationStatus = 'ok' | 'secret_missing' | 'token_missing' | 'token_invalid';
+
+const authorizationStatus = (request: Request, env: WorkerEnv): AuthorizationStatus => {
+  // Normalize accidental leading/trailing whitespace without exposing the secret.
+  const configured = env.API_TOKEN?.trim() ?? '';
+  if (!configured) return 'secret_missing';
+
+  const header = request.headers.get('authorization') ?? '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  const supplied = match?.[1]?.trim() ?? '';
+  if (!supplied) return 'token_missing';
+
+  return constantTimeEqual(supplied, configured) ? 'ok' : 'token_invalid';
+};
+
+const authorizationError = (request: Request, env: WorkerEnv): Response | null => {
+  const status = authorizationStatus(request, env);
+  if (status === 'ok') return null;
+  if (status === 'secret_missing') {
+    return json({
+      error: 'api_token_not_configured',
+      message: 'Секрет API_TOKEN не налаштовано для цього середовища Worker.',
+    }, 503);
+  }
+  if (status === 'token_missing') {
+    return json({ error: 'missing_token', message: 'Не передано Bearer-токен.' }, 401);
+  }
+  return json({ error: 'unauthorized', message: 'API_TOKEN не збігається з токеном запиту.' }, 401);
 };
 
 const validateRows = (input: unknown): { rows: AstRow[]; issues: { rowNumber: number; field: string; message: string }[] } => {
@@ -134,7 +158,8 @@ const validateRows = (input: unknown): { rows: AstRow[]; issues: { rowNumber: nu
 };
 
 const importAst = async (request: Request, env: WorkerEnv): Promise<Response> => {
-  if (!authorized(request, env)) return json({ error: 'unauthorized', message: 'Потрібна авторизація.' }, 401);
+  const authError = authorizationError(request, env);
+  if (authError) return authError;
   if (!env.DB) return json({ error: 'database_unavailable' }, 503);
   if (!env.PATIENT_HMAC_SECRET || env.PATIENT_HMAC_SECRET.length < 32) {
     return json({ error: 'pseudonymization_not_configured', message: 'Не налаштовано PATIENT_HMAC_SECRET (мінімум 32 символи).' }, 503);
@@ -266,7 +291,8 @@ export default {
     }
 
     if (url.pathname === '/api/amr/ast' && request.method === 'GET') {
-      if (!authorized(request, env)) return json({ error: 'unauthorized' }, 401);
+      const authError = authorizationError(request, env);
+      if (authError) return authError;
       if (!env.DB) return json({ error: 'database_unavailable' }, 503);
       const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 500)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
