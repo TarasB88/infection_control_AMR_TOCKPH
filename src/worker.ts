@@ -14,6 +14,7 @@ interface D1Database {
 
 interface Env {
   DB?: D1Database;
+  ASSETS?: { fetch(request: Request): Promise<Response> };
 }
 
 const json = (data: unknown, status = 200): Response =>
