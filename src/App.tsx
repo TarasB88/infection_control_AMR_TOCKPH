@@ -116,7 +116,7 @@ export default function App(){
  };
  const submitLogin=async(event:FormEvent)=>{
   event.preventDefault();setAuthError('Увійдемо до системи…');
-  try{const response=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({email:loginEmail,password:loginPassword})});const data=await response.json() as {message?:string;error?:string};if(!response.ok){setAuthError(data.message||data.error||'Не вдалося увійти.');return;}window.location.reload();}
+  try{const response=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({email:loginEmail,password:loginPassword})});const data=await readApiJson<{message?:string;error?:string}>(response);if(!response.ok){setAuthError(data.message||data.error||'Не вдалося увійти.');return;}window.location.reload();}
   catch(error){setAuthError(error instanceof Error?error.message:'Помилка входу.');}
  };
  const submitSetup=async(event:FormEvent)=>{
