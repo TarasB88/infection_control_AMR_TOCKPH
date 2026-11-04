@@ -110,7 +110,7 @@ export default function App(){
   try{const response=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({email:loginEmail,password:loginPassword})});const data=await response.json() as {message?:string;error?:string};if(!response.ok){setAuthError(data.message||data.error||'Не вдалося увійти.');return;}window.location.reload();}
   catch(error){setAuthError(error instanceof Error?error.message:'Помилка входу.');}
  };
- const submitSetup=async(event:React.FormEvent)=>{
+ const submitSetup=async(event:FormEvent)=>{
   event.preventDefault();setAuthError('Створення першого адміністратора…');
   try{const response=await fetch('/api/auth/setup',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({setupToken,email:setupEmail,fullName:setupName,password:setupPassword})});const data=await response.json() as {message?:string;error?:string};if(!response.ok){setAuthError(data.message||data.error||'Не вдалося створити адміністратора.');return;}setSetupRequired(false);setLoginEmail(setupEmail);setLoginPassword('');setAuthError('Адміністратора створено. Тепер увійдіть із заданим паролем.');}
   catch(error){setAuthError(error instanceof Error?error.message:'Помилка створення профілю.');}
