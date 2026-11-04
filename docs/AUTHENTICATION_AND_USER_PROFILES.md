@@ -1,17 +1,19 @@
 # Authentication, user profiles and AMR data entry
 
-## Scope
+## Authentication architecture
 
-The dashboard uses Cloudflare Access for sign-in and D1 for application profiles and role/facility permissions. It does not store user passwords. The Worker validates the signed `Cf-Access-Jwt-Assertion` header (RS256 signature, issuer, expiry and application audience) against the Cloudflare Access signing keys.
+The application uses its own D1-backed password authentication. Cloudflare Access is not required. The Worker verifies credentials, stores only PBKDF2 password hashes (SHA-256, 310,000 iterations, unique random salt), and issues opaque random sessions. Only a SHA-256 hash of each session token is stored in D1.
+
+Session cookies are `HttpOnly`, `Secure`, `SameSite=Strict`, host-only (`__Host-` prefix), and expire after 8 hours. State-changing requests require both a same-origin `Origin` header and a session-bound CSRF token. Login attempts are rate-limited by email (8 failed attempts per 15 minutes). Logout revokes the server-side session.
 
 The first release includes:
-- `admin`: full access and user-profile administration;
+- `admin`: full access, user profile management and all facilities;
 - `operator`: manual AST entry and Excel import for assigned facility codes;
-- `analyst`: read-only AST access for assigned facility codes;
+- `analyst`: read-only AST access and export for assigned facility codes;
 - manual AST entry and Excel import through the same validation and D1 persistence pipeline;
 - audit events associated with the authenticated profile.
 
-## 1. Apply the additive D1 migration
+## 1. Apply D1 migrations
 
 From the project root, after pulling the latest `main` branch:
 
@@ -20,59 +22,44 @@ npx wrangler d1 migrations apply infection-control-amr-tockph --remote
 npx wrangler d1 migrations list infection-control-amr-tockph --remote
 ```
 
-Migration `0002_user_profiles.sql` adds `user_profiles` and `user_facility_access`. It does not delete or rewrite existing IPC/AMR records.
+Migration `0002_user_profiles.sql` adds user profiles and facility scopes. Migration `0003_password_sessions.sql` adds password credential fields, session storage and login-attempt tracking. Both migrations are additive; they do not delete or rewrite existing IPC/AMR records.
 
-## 2. Protect the Worker with Cloudflare Access
+## 2. Configure the one-time administrator setup secret
 
-In Cloudflare Dashboard:
+In **Workers & Pages → infection-control-amr-tockph → Settings → Variables and Secrets**, add a Production secret:
 
-1. Open **Workers & Pages → infection-control-amr-tockph → Access**.
-2. Select **Protect this Worker behind Access**.
-3. Select **All traffic** for the production Worker.
-4. Create or select an allow policy. Initially allow the administrator's exact email address. Add staff emails to the policy as they are onboarded.
-5. Apply Access and test that an unauthenticated browser is redirected to the Cloudflare Access sign-in page.
-
-Worker-level Access protects the Worker across its `workers.dev` hostname and associated routes. See the official [Cloudflare Workers Access guide](https://developers.cloudflare.com/workers/configuration/cloudflare-access/).
-
-## 3. Configure Worker variables
-
-In **Workers & Pages → infection-control-amr-tockph → Settings → Variables and Secrets**, add these non-secret variables in the Production environment:
-
-| Variable | Value |
+| Secret | Value |
 |---|---|
-| `ACCESS_TEAM_DOMAIN` | `https://<your-team-name>.cloudflareaccess.com` |
-| `ACCESS_AUD` | Application Audience (AUD) tag from the Access application |
-| `INITIAL_ADMIN_EMAIL` | Exact email address that will be the first system administrator |
+| `INITIAL_ADMIN_SETUP_TOKEN` | A unique random secret of at least 32 characters |
 
-Use the exact Access Team domain and AUD tag. The AUD tag is available in **Zero Trust → Access → Applications → your application → Additional settings**. The AUD binds the JWT to this Access application.
+Generate a strong value locally (do not send it in chat or commit it to Git), for example with a password manager or a cryptographically secure random generator. The secret is only used to create the first administrator when the `user_profiles` table is empty. After the first administrator has been created, the endpoint permanently refuses further setup attempts because the table is no longer empty. Remove this secret from Worker settings after successful bootstrap.
 
-Do **not** change `PATIENT_HMAC_SECRET`. Keep the existing Production secret unchanged so previously generated patient pseudonyms remain stable. The old `API_TOKEN` is no longer used by the current profile-based API; do not remove it until the new login and import path has been verified.
+Keep the existing `PATIENT_HMAC_SECRET` unchanged. Changing it would change patient pseudonyms on future imports and break continuity with existing pseudonymized records. The old `API_TOKEN`, if still present, is not used by the new application.
 
-Official reference: [Cloudflare Access JWT validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/).
+## 3. Create the first administrator
 
-## 4. Bootstrap the first administrator
+1. Deploy the current Worker and frontend.
+2. Open the dashboard. If no profile exists, the first-run setup form is displayed.
+3. Enter the `INITIAL_ADMIN_SETUP_TOKEN`, administrator's full name, email and a strong password (at least 12 characters).
+4. After the success message, sign in using the email and password just created.
+5. Remove `INITIAL_ADMIN_SETUP_TOKEN` from Production secrets.
 
-1. Set `INITIAL_ADMIN_EMAIL` to the same email that is allowed by the Access policy.
-2. Deploy the updated Worker and frontend.
-3. Open the dashboard and sign in using that email through Cloudflare Access.
-4. On the first successful `/api/auth/me` request, the Worker creates an active administrator profile for that exact email if no profile already exists.
-5. Open **Користувачі та доступ** to create staff profiles.
+The first-run endpoint accepts requests only from the same origin, requires the secret, and works only while there are zero user profiles.
 
-The initial administrator profile is not auto-promoted if a profile with that email already exists. This avoids silently changing an existing account's role.
+## 4. Create staff profiles
 
-## 5. Create profiles and assign access
-
-The administrator form supports:
-- full name and email;
+Open **Користувачі та доступ**. For each staff member, specify:
+- full name and unique email;
 - role: admin, operator, or analyst;
 - active/deactivated status;
-- access to all facilities, or a comma-separated list of facility codes.
+- access to all facilities, or a comma-separated list of facility codes;
+- an initial password of at least 12 characters (required for new profiles).
 
-For limited operators and analysts, the facility codes must match `Hospital_ID` values in the AST data exactly. A profile with no facility codes and without the all-facilities flag can sign in but cannot read or import facility records.
+When editing an existing profile, leave the password field blank to keep the current password. To reset a staff member's password, enter a new password. Facility codes must match the `Hospital_ID` values in AST data exactly.
 
-Creating a profile does not automatically allow its email through Cloudflare Access. The email must also satisfy an Access allow policy.
+Deactivating a profile blocks access at the next API request and does not delete its history or data. Existing sessions should be revoked when deactivating a user; the application also rejects sessions for inactive profiles.
 
-## 6. AST data entry
+## 5. AST data entry
 
 ### Manual entry
 
@@ -84,24 +71,28 @@ Use **Завантажити шаблон Excel**. The workbook contains:
 - `AMR_AST`: the exact 16-column import header;
 - `Інструкція`: field definitions and formatting rules.
 
-Do not rename or remove columns. Dates must be `YYYY-MM-DD`; S/I/R must remain separate; MIC operator and MIC value are separate fields. The Worker checks the user's permitted `Hospital_ID` values before saving.
+Do not rename or remove columns. Dates must be `YYYY-MM-DD`; S/I/R must remain separate; MIC operator and MIC value are separate fields. `Patient_ID` is transmitted to the Worker only for server-side HMAC pseudonymization; plaintext is not stored in D1.
 
-## 7. API endpoints
+## 6. API endpoints
 
-- `GET /api/auth/me`: verified identity and provisioned profile.
+- `GET /api/auth/status`: reports whether first-run setup is still required.
+- `POST /api/auth/setup`: one-time first administrator creation.
+- `POST /api/auth/login`: verifies credentials and issues a secure session cookie.
+- `GET /api/auth/me`: returns the current profile and CSRF token.
+- `POST /api/auth/logout`: revokes the current session.
 - `GET /api/admin/users`: list profiles (admin only).
-- `POST /api/admin/users`: create or update a profile (admin only).
+- `POST /api/admin/users`: create/update profiles and set/reset passwords (admin only).
 - `GET /api/amr/ast`: read AST rows within the user's facility scope.
 - `POST /api/amr/ast/manual`: manual AST write.
 - `POST /api/amr/ast/import`: Excel AST write.
 - `GET /api/health`: non-sensitive D1 connectivity probe.
 
-The browser no longer sends a shared API Bearer token. Each same-origin request passes through Cloudflare Access, and the Worker validates the signed Access JWT before accessing profile or AST endpoints.
+All state-changing authenticated requests require same-origin validation and the CSRF token returned by `/api/auth/me`.
 
-## 8. Operational cautions
+## 7. Operational cautions
 
 - Do not enter identifiable patient information into test or demo environments.
-- The Worker HMAC-pseudonymizes `Patient_ID`; retain the current `PATIENT_HMAC_SECRET`.
+- Retain the current `PATIENT_HMAC_SECRET`; never rotate it without a planned pseudonym migration.
 - The current AST schema derives isolate identity from `Hospital_ID + Sample_ID + Bacterial_Species`. Add an explicit laboratory `Isolate_ID` if the source form distinguishes multiple same-species isolates from one sample.
-- The present profile module governs AMR AST access. Other IPC/WGS/NPA modules still require their own persisted forms, endpoints and role checks before being treated as operational.
-- Complete access-policy review, backup/restore testing, audit-log review, data-retention rules and legal-basis assessment before production use with real patient-linked data.
+- The present profile module governs AMR AST access. Other IPC/WGS/NPA modules still require persisted forms, endpoints and role checks before being treated as operational.
+- Before production use with real patient-linked data, complete access-policy review, password-reset procedure, backup/restore testing, audit-log review, data-retention rules, and legal-basis assessment.
