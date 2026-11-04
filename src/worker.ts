@@ -151,7 +151,7 @@ const handleInitialSetup = async (request:Request, env:WorkerEnv):Promise<Respon
   if (!constantTimeEqual(text(body.setupToken),env.INITIAL_ADMIN_SETUP_TOKEN)) return json({error:'setup_token_invalid'},403);
   const count=await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles').first<{total:number}>();
   if ((count?.total??0)!==0) return json({error:'setup_already_completed',message:'Початкове створення адміністратора вже виконано.'},409);
-  const email=text(body.email).toLowerCase(), fullName=text(body.fullName), password=text(body.password);
+  const email=text(body.email).toLowerCase(), fullName=text(body.fullName), password=String(body.password??'');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({error:'invalid_email'},400);
   if (fullName.length<3 || fullName.length>160) return json({error:'invalid_full_name'},400);
   if (password.length<12 || password.length>128) return json({error:'weak_password',message:'Пароль має містити щонайменше 12 символів.'},400);
@@ -171,6 +171,7 @@ const handleLogin = async (request:Request, env:WorkerEnv):Promise<Response> => 
   const email=text(body.email).toLowerCase(), password=String(body.password??'');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length>128) return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
   await env.DB.prepare("DELETE FROM login_attempts WHERE attempted_at < datetime('now','-1 day')").run();
+  await env.DB.prepare("DELETE FROM user_sessions WHERE expires_at <= datetime('now')").run();
   const attempts=await env.DB.prepare("SELECT COUNT(*) AS total FROM login_attempts WHERE email=? AND attempted_at > datetime('now','-15 minutes')").bind(email).first<{total:number}>();
   if ((attempts?.total??0)>=8) return json({error:'login_rate_limited',message:'Забагато невдалих спроб. Спробуйте через 15 хвилин.'},429);
   const profile=await env.DB.prepare('SELECT id,email,full_name,role,is_active,all_facilities,password_salt,password_hash FROM user_profiles WHERE email=? COLLATE NOCASE').bind(email)
