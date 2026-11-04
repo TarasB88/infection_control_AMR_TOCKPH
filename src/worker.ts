@@ -358,7 +358,7 @@ const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' |
       statements.push(env.DB.prepare(
         `INSERT INTO ast_results (id, isolate_id, antimicrobial_agent, mic_operator, mic_value,
            zone_diameter, sir_category, interpretation_standard, source_batch_id, source_system, source_record_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'excel', ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(source_system, source_record_id) DO UPDATE SET
            mic_operator=excluded.mic_operator, mic_value=excluded.mic_value,
            zone_diameter=excluded.zone_diameter, sir_category=excluded.sir_category,
