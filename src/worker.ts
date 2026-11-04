@@ -188,7 +188,7 @@ const handleLogin = async (request:Request, env:WorkerEnv):Promise<Response> => 
     .bind(sessionId,profile.id,await sha256(token),csrfToken,`+${SESSION_TTL_SECONDS} seconds`).run();
   await env.DB.prepare('INSERT INTO audit_log (id,actor_id,action,entity_type,entity_id,details_json) VALUES (?,?,?,?,?,?)')
     .bind(crypto.randomUUID(),profile.id,'login','user_session',sessionId,JSON.stringify({email})).run();
-  return new Response(JSON.stringify({user:publicUser({...profile,facilityCodes:[],sessionId,csrfToken})}),{status:200,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','set-cookie':sessionCookie(token,SESSION_TTL_SECONDS),'x-content-type-options':'nosniff'}});
+  return new Response(JSON.stringify({user:publicUser({...profile,facilityCodes:[]})}),{status:200,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','set-cookie':sessionCookie(token,SESSION_TTL_SECONDS),'x-content-type-options':'nosniff'}});
 };
 const handleLogout = async (request:Request, env:WorkerEnv):Promise<Response> => {
   const auth=await getAuthenticatedUser(request,env);
