@@ -220,7 +220,7 @@ const importAst = async (request: Request, env: WorkerEnv): Promise<Response> =>
     await env.DB.prepare(
       `UPDATE import_batches SET status = ?, rows_inserted = ?, rows_rejected = ?,
        validation_summary = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    ).bind(rejectedRows ? 'partial' : 'committed', rows.length, rejectedRows,
+    ).bind(rejectedRows ? 'validated' : 'committed', rows.length, rejectedRows,
       JSON.stringify(issues.slice(0, 100)), batchId).run();
 
     await env.DB.prepare(
