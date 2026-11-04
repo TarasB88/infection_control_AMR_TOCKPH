@@ -1,33 +1,39 @@
 # IPC & AMR Monitoring — Ternopil CDC
 
-Internal Ukrainian-language MVP for facility-level infection prevention and control (IPC) monitoring and antimicrobial resistance (AMR) surveillance.
+Internal Ukrainian-language information and analytics MVP for facility-level infection prevention and control (IPC) monitoring and antimicrobial resistance (AMR) surveillance.
 
 ## Implemented in the repository
 
-- Responsive Ukrainian dashboard shell and existing IPC/AMR modules.
+- Responsive Ukrainian dashboard shell and IPC/AMR modules.
 - AMR AST table and exact 16-column Excel import contract.
 - Manual AST entry and Excel import through a shared Worker/D1 validation path.
 - Downloadable Excel template with a separate instructions worksheet.
-- Cloudflare Access JWT verification (RS256 signature, issuer, expiry and application audience).
+- D1-backed password authentication with PBKDF2 password hashing and random salts.
+- Opaque server-side sessions in HttpOnly, Secure, SameSite=Strict cookies.
+- Same-origin and CSRF checks for state-changing requests.
+- First-administrator one-time setup flow protected by a Worker secret.
 - D1 user profiles with roles: `admin`, `operator`, `analyst`.
 - Facility-code scoped AST read/write permissions.
-- Admin interface to create, edit and deactivate profiles.
+- Admin interface to create, edit, deactivate profiles and set/reset passwords.
 - Patient_ID HMAC-SHA-256 pseudonymization.
 - Import batch metadata and actor-attributed audit events.
 - AMR map with district/community switch.
 
-## Required before the new login flow can be used
+Cloudflare Access is not required for the application sign-in flow.
 
-The repository changes do not automatically configure resources inside the Cloudflare account. Complete the setup in [Authentication and user profiles](docs/AUTHENTICATION_AND_USER_PROFILES.md):
+## Production setup
 
-1. Apply D1 migrations, including `0002_user_profiles.sql`.
-2. Protect the Worker with Cloudflare Access.
-3. Set Production variables `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, and `INITIAL_ADMIN_EMAIL`.
-4. Keep the existing `PATIENT_HMAC_SECRET` unchanged.
-5. Deploy the current `main` branch.
-6. Sign in as the initial administrator and provision staff profiles.
+See [Authentication and user profiles](docs/AUTHENTICATION_AND_USER_PROFILES.md):
 
-The prior shared `API_TOKEN` field has been removed from the dashboard. The current AST endpoints use verified Cloudflare Access identity and D1 profile permissions instead.
+1. Apply D1 migrations `0002_user_profiles.sql` and `0003_password_sessions.sql`.
+2. Add the one-time Production secret `INITIAL_ADMIN_SETUP_TOKEN`.
+3. Deploy the current `main` branch.
+4. Create the first administrator from the first-run setup form.
+5. Remove `INITIAL_ADMIN_SETUP_TOKEN` after successful setup.
+6. Keep the existing `PATIENT_HMAC_SECRET` unchanged.
+7. Admin creates staff profiles and assigns roles/facility codes.
+
+The previous shared `API_TOKEN` and Cloudflare Access identity flow are not used by the current application.
 
 ## AST data grain and fields
 
@@ -39,9 +45,9 @@ The current derived isolate identity uses `Hospital_ID + Sample_ID + Bacterial_S
 
 - React + TypeScript + Vite
 - Cloudflare Workers
-- Cloudflare Access
 - Cloudflare D1
 - Excel parsing/export through SheetJS
+- Web Crypto API (PBKDF2, SHA-256, HMAC-SHA-256)
 
 ## Local development
 
@@ -51,11 +57,10 @@ npm run dev
 npm run build
 ```
 
-The protected API expects Cloudflare Access to be configured in the deployed environment. The production Worker verifies the Access JWT from `Cf-Access-Jwt-Assertion` against the team's signing keys.
-
 ## Important limitations
 
-- The current user-profile and permission model is implemented for the AMR AST workflows. IPC visit/assessment, WGS and legal-act modules still need their own persisted forms, endpoints and role-aware permissions before operational use.
+- The current user-profile and permission model is implemented for AMR AST workflows. IPC visit/assessment, WGS and legal-act modules still need their own persisted forms, endpoints and role-aware permissions before operational use.
 - Google Sheets and R2 are not connected.
-- Do not upload identifiable patient data before access-policy review, backup/restore testing, audit-log review, retention rules and lawful-basis assessment.
+- Login rate limiting is currently email-based and should be complemented with edge-level abuse protection before a broad public rollout.
+- Do not upload identifiable patient data before security review, backup/restore testing, audit-log review, retention rules and lawful-basis assessment.
 - Never change `PATIENT_HMAC_SECRET` after real imports begin unless a planned migration of pseudonyms has been designed.
