@@ -46,7 +46,29 @@ export default function App(){
   }catch(error){setNotice('Не вдалося прочитати файл або зберегти дані: '+(error instanceof Error?error.message:String(error)));}
  };
  const exportFile=()=>{const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'AMR_AST');XLSX.writeFile(wb,'AMR_AST_export.xlsx');};
- const downloadTemplate=()=>{const ws=XLSX.utils.aoa_to_sheet([required]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'AMR_AST');XLSX.writeFile(wb,'AMR_AST_template.xlsx');};
+ const downloadTemplate=()=>{
+  const wb=XLSX.utils.book_new();
+  const dataSheet=XLSX.utils.aoa_to_sheet([required]);
+  dataSheet['!autofilter']={ref:'A1:P1'};
+  XLSX.utils.book_append_sheet(wb,dataSheet,'AMR_AST');
+  const instructions=[
+   ['Інструкція до шаблону AMR AST'],
+   ['Поле','Вимога / пояснення'],
+   ['Hospital_ID','Стабільний код закладу; має збігатися з кодом, призначеним у профілі користувача.'],
+   ['Patient_ID','Внутрішній ідентифікатор пацієнта; на сервері буде перетворений на HMAC-псевдонім.'],
+   ['Sample_ID','Стабільний код зразка.'],
+   ['Sampling_Date','Дата у форматі YYYY-MM-DD.'],
+   ['MIC_Operator','Один із символів: =, <, >, <=, >=, ≤, ≥.'],
+   ['MIC_Value','Числове або лабораторне значення MIC; оператор зберігається окремо.'],
+   ['Zone_Diameter','Діаметр зони, якщо застосовується метод диско-дифузії.'],
+   ['SIR_Category','Лише S, I або R; не об’єднувати категорії.'],
+   ['Interpretation_Standard','Зазначати стандарт і версію інтерпретації, наприклад EUCAST 2026.'],
+   ['Загальні правила','Не перейменовувати й не видаляти колонки. Один рядок — один результат для ізоляту та антимікробного препарату.'],
+   ['Імпорт','Система перевіряє структуру та дозволений для користувача код закладу перед записом у D1.']
+  ];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(instructions),'Інструкція');
+  XLSX.writeFile(wb,'AMR_AST_template.xlsx');
+ };
  const loadFromD1=async(activate=true)=>{
   try{
    const response=await fetch('/api/amr/ast?limit=1000',{credentials:'same-origin',headers:{accept:'application/json'}});
