@@ -1,27 +1,107 @@
-import {useMemo,useRef,useState} from 'react';
-import {Activity,AlertCircle,ArrowDownToLine,ArrowUpFromLine,BadgeCheck,Building2,CalendarDays,ClipboardCheck,Dna,FileSpreadsheet,FlaskConical,LayoutDashboard,Menu,Microscope,GraduationCap,Search,ShieldCheck,SlidersHorizontal,X} from 'lucide-react';
+import {useEffect,useMemo,useRef,useState} from 'react';
+import {Activity,AlertCircle,ArrowDownToLine,ArrowUpFromLine,BadgeCheck,Building2,CalendarDays,ClipboardCheck,Dna,FileSpreadsheet,FlaskConical,LayoutDashboard,Menu,Microscope,GraduationCap,Search,ShieldCheck,SlidersHorizontal,Users,X} from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AmrMap } from './components/AmrMap';
 import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import { Training } from './components/Training';
-type Tab='overview'|'facilities'|'visits'|'ipc'|'amr'|'recommendations'|'imports'|'legal'|'training';
+type Tab='overview'|'facilities'|'visits'|'ipc'|'amr'|'recommendations'|'imports'|'legal'|'training'|'users';
 type Row={Hospital_ID:string;Hospital_Name:string;Region_Oblast:string;Territorial_Hromada:string;Settlement:string;Patient_ID:string;Sample_ID:string;Sampling_Date:string;Sample_Matrix_Type:string;Bacterial_Species:string;Antimicrobial_Agent:string;MIC_Operator:string;MIC_Value:string;Zone_Diameter:string;SIR_Category:string;Interpretation_Standard:string};
 const normalizeArea=(value:string)=>value.toLocaleLowerCase('uk').replace(/(територіальна громада|міська громада|селищна громада|сільська громада|отг|громада)/g,'').replace(/[^а-яіїєґa-z0-9]/gi,'').trim();
 const required=['Hospital_ID','Hospital_Name','Region_Oblast','Territorial_Hromada','Settlement','Patient_ID','Sample_ID','Sampling_Date','Sample_Matrix_Type','Bacterial_Species','Antimicrobial_Agent','MIC_Operator','MIC_Value','Zone_Diameter','SIR_Category','Interpretation_Standard'];
-const demo:Row[]=[{Hospital_ID:'DEMO-001',Hospital_Name:'Демонстраційний заклад',Region_Oblast:'Тернопільська',Territorial_Hromada:'Тернопільська',Settlement:'Тернопіль',Patient_ID:'DEMO-P01',Sample_ID:'DEMO-SAM-001',Sampling_Date:'2026-10-15',Sample_Matrix_Type:'Blood',Bacterial_Species:'Klebsiella pneumoniae',Antimicrobial_Agent:'Meropenem',MIC_Operator:'>',MIC_Value:'16',Zone_Diameter:'10',SIR_Category:'R',Interpretation_Standard:'EUCAST 2026'},{Hospital_ID:'DEMO-001',Hospital_Name:'Демонстраційний заклад',Region_Oblast:'Тернопільська',Territorial_Hromada:'Тернопільська',Settlement:'Тернопіль',Patient_ID:'DEMO-P02',Sample_ID:'DEMO-SAM-002',Sampling_Date:'2026-10-18',Sample_Matrix_Type:'Urine',Bacterial_Species:'Escherichia coli',Antimicrobial_Agent:'Ciprofloxacin',MIC_Operator:'=',MIC_Value:'2',Zone_Diameter:'14',SIR_Category:'R',Interpretation_Standard:'EUCAST 2026'}];
-const nav=[{id:'overview' as Tab,label:'Огляд системи',icon:LayoutDashboard,group:'РОБОЧА ПАНЕЛЬ'},{id:'facilities' as Tab,label:'Реєстр закладів',icon:Building2,group:'РОБОЧА ПАНЕЛЬ'},{id:'visits' as Tab,label:'Моніторингові візити',icon:CalendarDays,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'ipc' as Tab,label:'Оцінювання IPC',icon:ClipboardCheck,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'training' as Tab,label:'Навчальні заходи',icon:GraduationCap,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'amr' as Tab,label:'Моніторинг AMR',icon:Microscope,group:'ЛАБОРАТОРНИЙ НАГЛЯД'},{id:'recommendations' as Tab,label:'Рекомендації',icon:BadgeCheck,group:'ІНСТРУМЕНТИ'},{id:'imports' as Tab,label:'Імпорт даних',icon:FileSpreadsheet,group:'ІНСТРУМЕНТИ'},{id:'legal' as Tab,label:'Моніторинг НПА',icon:FileSpreadsheet,group:'НОРМАТИВНО-ПРАВОВА БАЗА'}];
+const nav=[{id:'overview' as Tab,label:'Огляд системи',icon:LayoutDashboard,group:'РОБОЧА ПАНЕЛЬ'},{id:'facilities' as Tab,label:'Реєстр закладів',icon:Building2,group:'РОБОЧА ПАНЕЛЬ'},{id:'visits' as Tab,label:'Моніторингові візити',icon:CalendarDays,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'ipc' as Tab,label:'Оцінювання IPC',icon:ClipboardCheck,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'training' as Tab,label:'Навчальні заходи',icon:GraduationCap,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'amr' as Tab,label:'Моніторинг AMR',icon:Microscope,group:'ЛАБОРАТОРНИЙ НАГЛЯД'},{id:'recommendations' as Tab,label:'Рекомендації',icon:BadgeCheck,group:'ІНСТРУМЕНТИ'},{id:'imports' as Tab,label:'Імпорт даних',icon:FileSpreadsheet,group:'ІНСТРУМЕНТИ'},{id:'legal' as Tab,label:'Моніторинг НПА',icon:FileSpreadsheet,group:'НОРМАТИВНО-ПРАВОВА БАЗА'},{id:'users' as Tab,label:'Користувачі та доступ',icon:Users,group:'АДМІНІСТРУВАННЯ'}];
 const modules=[{icon:Building2,name:'Реєстр закладів',desc:'Картки закладів та історія моніторингу',id:'facilities' as Tab,tag:'IPC'},{icon:ClipboardCheck,name:'Оцінювання IPC',desc:'Критерії, результати та динаміка візитів',id:'ipc' as Tab,tag:'IPC'},{icon:Microscope,name:'Мікробіологічний AMR',desc:'Антибіотикограми, MIC та категорії S/I/R',id:'amr' as Tab,tag:'AMR'},{icon:Dna,name:'Геномний нагляд WGS',desc:'MLST, гени AMR, вірулентність і плазміди',id:'amr' as Tab,tag:'WGS'},{icon:CalendarDays,name:'Моніторингові візити',desc:'Планування, історія та звіти',id:'visits' as Tab,tag:'IPC'},{icon:GraduationCap,name:'Навчальні заходи',desc:'Облік тренінгів, семінарів та охоплення працівників',id:'training' as Tab,tag:'IPC'},{icon:BadgeCheck,name:'Коригувальні заходи',desc:'Рекомендації, терміни та контроль виконання',id:'recommendations' as Tab,tag:'IPC'},{icon:FileSpreadsheet,name:'Моніторинг НПА',desc:'Актуальність нормативних вимог та зміни документів',id:'legal' as Tab,tag:'НПА'}];
 export default function App(){
- const [tab,setTab]=useState<Tab>('overview'),[mobile,setMobile]=useState(false),[query,setQuery]=useState(''),[rows,setRows]=useState<Row[]>(demo),[apiToken,setApiToken]=useState(''),[notice,setNotice]=useState('Демонстраційні записи — не реальні дані закладів.'),[speciesFilter,setSpeciesFilter]=useState('all'),[agentFilter,setAgentFilter]=useState('all'),[sirFilter,setSirFilter]=useState('all'),[selectedDistrict,setSelectedDistrict]=useState('all'),[selectedCommunity,setSelectedCommunity]=useState('all');
+ const [tab,setTab]=useState<Tab>('overview'),[mobile,setMobile]=useState(false),[query,setQuery]=useState(''),[rows,setRows]=useState<Row[]>([]),[notice,setNotice]=useState('Перевірка авторизації…'),[speciesFilter,setSpeciesFilter]=useState('all'),[agentFilter,setAgentFilter]=useState('all'),[sirFilter,setSirFilter]=useState('all'),[selectedDistrict,setSelectedDistrict]=useState('all'),[selectedCommunity,setSelectedCommunity]=useState('all');
+ const [user,setUser]=useState<{id:string;email:string;fullName:string;role:'admin'|'operator'|'analyst';isActive:boolean;allFacilities:boolean;facilityCodes:string[]}|null>(null);
+ const [authLoading,setAuthLoading]=useState(true),[authError,setAuthError]=useState(''),[adminUsers,setAdminUsers]=useState<any[]>([]);
+ const [userDraft,setUserDraft]=useState({email:'',fullName:'',role:'operator' as 'admin'|'operator'|'analyst',isActive:true,allFacilities:false,facilityCodes:''});
+ const emptyAstRow:Row={Hospital_ID:'',Hospital_Name:'',Region_Oblast:'Тернопільська',Territorial_Hromada:'',Settlement:'',Patient_ID:'',Sample_ID:'',Sampling_Date:'',Sample_Matrix_Type:'',Bacterial_Species:'',Antimicrobial_Agent:'',MIC_Operator:'=',MIC_Value:'',Zone_Diameter:'',SIR_Category:'',Interpretation_Standard:'EUCAST'};
+ const [manualRow,setManualRow]=useState<Row>(emptyAstRow);
  const fileRef=useRef<HTMLInputElement>(null);
+ const manualFields:[keyof Row,string,string?][]=[['Hospital_ID','Код закладу'],['Hospital_Name','Назва закладу'],['Region_Oblast','Область'],['Territorial_Hromada','Територіальна громада'],['Settlement','Населений пункт'],['Patient_ID','Ідентифікатор пацієнта'],['Sample_ID','Sample ID'],['Sampling_Date','Дата забору','date'],['Sample_Matrix_Type','Матеріал'],['Bacterial_Species','Мікроорганізм'],['Antimicrobial_Agent','Антимікробний препарат'],['MIC_Operator','Оператор MIC'],['MIC_Value','Значення MIC'],['Zone_Diameter','Діаметр зони'],['SIR_Category','Категорія S / I / R'],['Interpretation_Standard','Стандарт інтерпретації']];
  const title=nav.find(n=>n.id===tab)?.label||'Огляд системи';
  const baseFiltered=useMemo(()=>rows.filter(r=>[r.Hospital_Name,r.Bacterial_Species,r.Antimicrobial_Agent,r.Sample_ID,r.SIR_Category].join(' ').toLowerCase().includes(query.toLowerCase())&&(speciesFilter==='all'||r.Bacterial_Species===speciesFilter)&&(agentFilter==='all'||r.Antimicrobial_Agent===agentFilter)&&(sirFilter==='all'||r.SIR_Category.toUpperCase()===sirFilter)),[rows,query,speciesFilter,agentFilter,sirFilter]);
  const communityStats=useMemo(()=>COMMUNITY_SHAPES.map(shape=>{const matched=baseFiltered.filter(r=>normalizeArea(r.Territorial_Hromada)===normalizeArea(shape.name));return{name:shape.name,total:matched.length,samples:new Set(matched.map(r=>r.Sample_ID)).size,resistant:matched.filter(r=>r.SIR_Category.toUpperCase()==='R').length};}),[baseFiltered]);
  const districtStats=useMemo(()=>DISTRICT_SHAPES.map(shape=>{const communityNames=COMMUNITY_SHAPES.filter(c=>c.district===shape.name).map(c=>normalizeArea(c.name));const matched=baseFiltered.filter(r=>communityNames.includes(normalizeArea(r.Territorial_Hromada)));return{name:shape.name,total:matched.length,samples:new Set(matched.map(r=>r.Sample_ID)).size,resistant:matched.filter(r=>r.SIR_Category.toUpperCase()==='R').length};}),[baseFiltered]);
  const filtered=useMemo(()=>baseFiltered.filter(r=>{if(selectedCommunity!=='all')return normalizeArea(r.Territorial_Hromada)===normalizeArea(selectedCommunity);if(selectedDistrict!=='all'){const c=COMMUNITY_SHAPES.find(shape=>normalizeArea(shape.name)===normalizeArea(r.Territorial_Hromada));return c?.district===selectedDistrict;}return true;}),[baseFiltered,selectedDistrict,selectedCommunity]);
- const loadFile=async(file?:File)=>{if(!file)return;const token=apiToken.trim();if(token&&!/^[\x21-\x7E]{16,}$/.test(token)){setNotice('API-токен має містити щонайменше 16 символів без пробілів і лише латинські літери, цифри та ASCII-символи. Перевірте значення в Cloudflare Secrets і в полі дашборду.');return;}try{const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const raw=XLSX.utils.sheet_to_json<Record<string,unknown>>(ws,{defval:''});const missing=required.filter(k=>!Object.keys(raw[0]||{}).includes(k));if(missing.length){setNotice('Імпорт відхилено. Відсутні колонки: '+missing.join(', '));return;}const parsed=raw.filter(r=>String(r.Sample_ID).trim()&&String(r.Bacterial_Species).trim()).map(r=>Object.fromEntries(required.map(k=>[k,String(r[k]??'')])) as unknown as Row);if(!parsed.length){setNotice('Не знайдено валідних рядків із Sample_ID та Bacterial_Species.');return;}setRows(parsed);if(token){setNotice('Передавання '+parsed.length+' рядків до захищеного API…');const response=await fetch('/api/amr/ast/import',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer '+token},body:JSON.stringify({sourceName:file.name,rows:parsed})});const result=await response.json() as {status?:string;rowsProcessed?:number;rowsRejected?:number;message?:string;error?:string;issues?:unknown[]};if(!response.ok){setNotice('Серверний імпорт не виконано: '+(result.message||result.error||response.statusText)+'. Дані залишилися лише в поточному сеансі.');return;}setNotice('Імпорт D1: '+(result.rowsProcessed??parsed.length)+' рядків збережено; відхилено: '+(result.rowsRejected??0)+'. Статус: '+result.status+'.');}else{setNotice('Зчитано '+parsed.length+' рядків AST. Для постійного збереження введіть API-токен; наразі дані лише в поточному сеансі браузера.');}setTab('amr');}catch{setNotice('Не вдалося прочитати файл або зв’язатися з API. Перевірте файл і доступність Worker.');}};
- const exportFile=()=>{const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'AMR_AST');XLSX.writeFile(wb,'AMR_AST_export.xlsx');};const loadFromD1=async()=>{const token=apiToken.trim();if(!token){setNotice('Введіть API-токен для читання даних із D1.');return;}if(!/^[\x21-\x7E]{16,}$/.test(token)){setNotice('Некоректний формат API-токена: дозволені лише друковані ASCII-символи без пробілів; мінімум 16 символів. Перевірте API_TOKEN у Cloudflare Secrets.');return;}try{setNotice('Завантаження збережених AST із D1…');const response=await fetch('/api/amr/ast?limit=1000',{headers:{authorization:'Bearer '+token,accept:'application/json'}});const body=await response.text();let result:{rows?:Row[];error?:string;message?:string}={};try{result=body?JSON.parse(body):{};}catch{throw new Error('API повернув не JSON. HTTP '+response.status+'. Початок відповіді: '+body.slice(0,180));}if(!response.ok){setNotice('API D1: HTTP '+response.status+' — '+(result.message||result.error||response.statusText||'невідома помилка'));return;}const saved=result.rows||[];setRows(saved);setNotice('Завантажено з D1: '+saved.length+' результатів AST. Patient_ID відображається лише як псевдонім.');setTab('amr');}catch(error){const detail=error instanceof Error?error.message:String(error);setNotice('Не вдалося виконати запит до API D1: '+detail+'. Перевірте адресу Worker, авторизацію та розгортання API.');}};
+ const loadFile=async(file?:File)=>{
+  if(!file)return;
+  try{
+   const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});
+   const ws=wb.Sheets[wb.SheetNames[0]];
+   const raw=XLSX.utils.sheet_to_json<Record<string,unknown>>(ws,{defval:''});
+   const missing=required.filter(k=>!Object.keys(raw[0]||{}).includes(k));
+   if(missing.length){setNotice('Імпорт відхилено. Відсутні колонки: '+missing.join(', '));return;}
+   const parsed=raw.filter(r=>String(r.Sample_ID).trim()&&String(r.Bacterial_Species).trim())
+    .map(r=>Object.fromEntries(required.map(k=>[k,String(r[k]??'')])) as unknown as Row);
+   if(!parsed.length){setNotice('У файлі немає рядків із Sample_ID та Bacterial_Species.');return;}
+   setNotice('Передавання '+parsed.length+' рядків до D1…');
+   const response=await fetch('/api/amr/ast/import',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({sourceName:file.name,rows:parsed})});
+   const result=await response.json() as {status?:string;rowsProcessed?:number;rowsRejected?:number;message?:string;error?:string};
+   if(!response.ok){setNotice('Імпорт не виконано: '+(result.message||result.error||('HTTP '+response.status)));return;}
+   await loadFromD1(false);
+   setNotice('Імпорт завершено. Опрацьовано: '+(result.rowsProcessed??parsed.length)+', відхилено: '+(result.rowsRejected??0)+'.');
+   setTab('amr');
+  }catch(error){setNotice('Не вдалося прочитати файл або зберегти дані: '+(error instanceof Error?error.message:String(error)));}
+ };
+ const exportFile=()=>{const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'AMR_AST');XLSX.writeFile(wb,'AMR_AST_export.xlsx');};
+ const downloadTemplate=()=>{const ws=XLSX.utils.aoa_to_sheet([required]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'AMR_AST');XLSX.writeFile(wb,'AMR_AST_template.xlsx');};
+ const loadFromD1=async(activate=true)=>{
+  try{
+   const response=await fetch('/api/amr/ast?limit=1000',{credentials:'same-origin',headers:{accept:'application/json'}});
+   const body=await response.text();let result:{rows?:Row[];error?:string;message?:string}={};
+   try{result=body?JSON.parse(body):{};}catch{throw new Error('API повернув не JSON. HTTP '+response.status);}
+   if(!response.ok){setNotice('API D1: HTTP '+response.status+' — '+(result.message||result.error||response.statusText));return false;}
+   const saved=result.rows||[];setRows(saved);setNotice('Завантажено з D1: '+saved.length+' результатів AST.');
+   if(activate)setTab('amr');return true;
+  }catch(error){setNotice('Не вдалося завантажити дані з D1: '+(error instanceof Error?error.message:String(error)));return false;}
+ };
+ const saveManual=async()=>{
+  setNotice('Збереження AST-запису…');
+  try{
+   const response=await fetch('/api/amr/ast/manual',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({sourceName:'Ручне введення AST',rows:[manualRow]})});
+   const result=await response.json() as {message?:string;error?:string};
+   if(!response.ok){setNotice('Не вдалося зберегти запис: '+(result.message||result.error||('HTTP '+response.status)));return;}
+   setManualRow(emptyAstRow);await loadFromD1(false);setNotice('AST-запис збережено в D1.');
+  }catch(error){setNotice('Помилка збереження: '+(error instanceof Error?error.message:String(error)));}
+ };
+ const loadAdminUsers=async()=>{
+  const response=await fetch('/api/admin/users',{credentials:'same-origin'});
+  const data=await response.json() as {users?:any[];message?:string};
+  if(!response.ok)throw new Error(data.message||'Не вдалося отримати перелік профілів.');
+  setAdminUsers(data.users||[]);
+ };
+ const saveUserProfile=async()=>{
+  const facilityCodes=userDraft.facilityCodes.split(/[,\n;]/).map(x=>x.trim()).filter(Boolean);
+  setNotice('Збереження профілю користувача…');
+  try{
+   const response=await fetch('/api/admin/users',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({...userDraft,facilityCodes})});
+   const data=await response.json() as {message?:string;error?:string};
+   if(!response.ok){setNotice('Профіль не збережено: '+(data.message||data.error||('HTTP '+response.status)));return;}
+   await loadAdminUsers();setUserDraft({email:'',fullName:'',role:'operator',isActive:true,allFacilities:false,facilityCodes:''});
+   setNotice('Профіль збережено. Переконайтеся, що email також дозволено в політиці Cloudflare Access.');
+  }catch(error){setNotice('Помилка роботи з профілями: '+(error instanceof Error?error.message:String(error)));}
+ };
+ useEffect(()=>{
+  let alive=true;
+  const initialize=async()=>{
+   try{
+    const response=await fetch('/api/auth/me',{credentials:'same-origin',headers:{accept:'application/json'}});
+    const data=await response.json() as {user?:{id:string;email:string;fullName:string;role:'admin'|'operator'|'analyst';isActive:boolean;allFacilities:boolean;facilityCodes:string[]};message?:string;error?:string};
+    if(!response.ok||!data.user){if(alive){setAuthError(data.message||data.error||'Не вдалося підтвердити обліковий запис.');setAuthLoading(false);}return;}
+    if(alive)setUser(data.user);
+    await loadFromD1(false);
+    if(data.user.role==='admin')await loadAdminUsers();
+   }catch(error){if(alive)setAuthError(error instanceof Error?error.message:'Помилка авторизації.');}
+   finally{if(alive)setAuthLoading(false);}
+  };
+  void initialize();
+  return()=>{alive=false;};
+ },[]);
+ const setManualField=(key:keyof Row,value:string)=>setManualRow(current=>({...current,[key]:value}));
+ if(authLoading)return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>IPC & AMR Monitoring</h1><p>Перевірка авторизації та профілю користувача…</p></div></div>;
+ if(!user)return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>Доступ до системи</h1><p>{authError||'Для роботи потрібен профіль користувача.'}</p><a className="primary" href="/cdn-cgi/access/login">Увійти через Cloudflare Access</a><small>Якщо доступ не відкривається, адміністратор має налаштувати Cloudflare Access та створити ваш профіль у системі.</small></div></div>;
  return <div className="shell"><aside className={'sidebar '+(mobile?'open':'')}><div className="brand"><div className="brandmark"><ShieldCheck/></div><div><b>ТЕРНОПІЛЬСЬКИЙ ОЦКПХ</b><small>IPC & AMR MONITORING</small></div><button className="close" onClick={()=>setMobile(false)}><X/></button></div><div className="sideintro">ІНФОРМАЦІЙНО-АНАЛІТИЧНА СИСТЕМА</div>{['РОБОЧА ПАНЕЛЬ','ІНФЕКЦІЙНИЙ КОНТРОЛЬ','ЛАБОРАТОРНИЙ НАГЛЯД','ІНСТРУМЕНТИ','НОРМАТИВНО-ПРАВОВА БАЗА'].map(g=><div className="navgroup" key={g}><label>{g}</label>{nav.filter(n=>n.group===g).map(n=><button key={n.id} className={'nav '+(tab===n.id?'active':'')} onClick={()=>{setTab(n.id);setMobile(false)}}><n.icon size={17}/>{n.label}</button>)}</div>)}<div className="sidebottom"><ShieldCheck size={16}/> Внутрішня система · доступ за авторизацією<small>Версія MVP 0.1.0</small></div></aside>
  <main><header className="topbar"><button className="hamb" onClick={()=>setMobile(true)}><Menu/></button><div>IPC & AMR <span>/</span> {title}</div><div className="topright"><em>ПРОТОТИП</em><b>ТБ</b></div></header><div className="page"><div className="pagehead"><div><label>ТЕРНОПІЛЬСЬКИЙ ОБЛАСНИЙ ЦЕНТР КОНТРОЛЮ ТА ПРОФІЛАКТИКИ ХВОРОБ МОЗ УКРАЇНИ</label><h1>{tab==='overview'?'Моніторинг інфекційного контролю та AMR':title}</h1><p>{tab==='overview'?'Єдиний робочий простір для моніторингових візитів, оцінювання IPC та лабораторного нагляду за AMR.':'Облік та аналітика на рівні окремого закладу охорони здоров’я.'}</p></div><button className="btn" onClick={()=>setTab('imports')}><ArrowUpFromLine size={16}/> Імпорт даних</button></div><div className="notice"><AlertCircle size={17}/>{notice}</div>
  {tab==='overview'&&<><div className="section"><div><h2>Робочий огляд</h2><p>Операційні модулі MVP · без обласних агрегованих показників</p></div><span className="pill">ЛОКАЛЬНА ДЕМО-ВЕРСІЯ</span></div><div className="modules">{modules.map((m,i)=><button className="module" key={i} onClick={()=>setTab(m.id)}><div className="modicon"><m.icon/></div><div><small>{m.tag}</small><h3>{m.name}</h3><p>{m.desc}</p></div><b>↗</b></button>)}</div><div className="twocol"><section className="panel"><h3>Структура системи</h3><p>Функціональні модулі першого релізу</p>{[['01','Заклади та організаційна структура','Реєстр і профілі ЗОЗ'],['02','Моніторинг інфекційного контролю','Візити, критерії та рекомендації'],['03','Антимікробна резистентність','AST / MIC / S-I-R та WGS'],['04','Управління даними','Excel-імпорт, перевірка, експорт']].map(x=><div className="struct" key={x[0]}><b>{x[0]}</b><span><strong>{x[1]}</strong><small>{x[2]}</small></span><em>Підготовлено</em></div>)}</section><section className="panel"><h3>Принципи MVP</h3><p>Обмеження першого релізу</p>{[['Заклад як одиниця аналізу','Дані переглядаються в межах конкретного ЗОЗ.'],['Без обласних агрегатів','Регіональні показники будуть наступним етапом.'],['Захист даних','Псевдонімізація пацієнтів та контроль доступу.']].map(x=><div className="principle" key={x[0]}><ShieldCheck/><span><b>{x[0]}</b><small>{x[1]}</small></span></div>)}</section></div></>}
