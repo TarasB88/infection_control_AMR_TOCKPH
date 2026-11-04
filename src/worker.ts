@@ -347,8 +347,8 @@ const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' |
       statements.push(env.DB.prepare(
         `INSERT INTO isolates (id, facility_id, sample_id, pseudonymous_patient_id, sampling_date,
            sample_matrix_type, bacterial_species, hromada, settlement, source_batch_id, source_system, source_record_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'excel', ?)
-         ON CONFLICT(source_system, source_record_id) DO UPDATE SET
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'app', ?)
+         ON CONFLICT(id) DO UPDATE SET
            facility_id=excluded.facility_id, pseudonymous_patient_id=excluded.pseudonymous_patient_id,
            sampling_date=excluded.sampling_date, sample_matrix_type=excluded.sample_matrix_type,
            hromada=excluded.hromada, settlement=excluded.settlement, updated_at=CURRENT_TIMESTAMP`,
@@ -358,8 +358,8 @@ const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' |
       statements.push(env.DB.prepare(
         `INSERT INTO ast_results (id, isolate_id, antimicrobial_agent, mic_operator, mic_value,
            zone_diameter, sir_category, interpretation_standard, source_batch_id, source_system, source_record_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'excel', ?)
-         ON CONFLICT(source_system, source_record_id) DO UPDATE SET
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'app', ?)
+         ON CONFLICT(id) DO UPDATE SET
            mic_operator=excluded.mic_operator, mic_value=excluded.mic_value,
            zone_diameter=excluded.zone_diameter, sir_category=excluded.sir_category,
            interpretation_standard=excluded.interpretation_standard, source_batch_id=excluded.source_batch_id,
