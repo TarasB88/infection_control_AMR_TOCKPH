@@ -1,4 +1,5 @@
-import {FormEvent,useEffect,useMemo,useRef,useState} from 'react';
+import type {FormEvent} from 'react';
+import {useEffect,useMemo,useRef,useState} from 'react';
 import {Activity,AlertCircle,ArrowDownToLine,ArrowUpFromLine,BadgeCheck,Building2,CalendarDays,ClipboardCheck,Dna,FileSpreadsheet,FlaskConical,LayoutDashboard,Menu,Microscope,GraduationCap,Search,ShieldCheck,SlidersHorizontal,Users,X} from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AmrMap } from './components/AmrMap';
