@@ -8,6 +8,16 @@ import { DISTRICT_SHAPES } from './lib/map-shapes';
 import { Training } from './components/Training';
 type Tab='overview'|'facilities'|'visits'|'ipc'|'amr'|'recommendations'|'imports'|'legal'|'training'|'users';
 type Row={Hospital_ID:string;Hospital_Name:string;Region_Oblast:string;Territorial_Hromada:string;Settlement:string;Patient_ID:string;Sample_ID:string;Sampling_Date:string;Sample_Matrix_Type:string;Bacterial_Species:string;Antimicrobial_Agent:string;MIC_Operator:string;MIC_Value:string;Zone_Diameter:string;SIR_Category:string;Interpretation_Standard:string};
+type ApiError={message?:string;error?:string};
+async function readApiJson<T>(response:Response):Promise<T>{
+ const body=await response.text();
+ const contentType=response.headers.get('content-type')||'';
+ if(!contentType.toLowerCase().includes('application/json')){
+  throw new Error('API повернув HTML або іншу відповідь замість JSON (HTTP '+response.status+', Content-Type: '+(contentType||'не вказано')+'). Перевірте, чи запит обробляє Worker, а не статична сторінка Cloudflare.');
+ }
+ try{return (body?JSON.parse(body):{}) as T;}
+ catch{throw new Error('API повернув некоректний JSON (HTTP '+response.status+').');}
+}
 const normalizeArea=(value:string)=>value.toLocaleLowerCase('uk').replace(/(територіальна громада|міська громада|селищна громада|сільська громада|отг|громада)/g,'').replace(/[^а-яіїєґa-z0-9]/gi,'').trim();
 const required=['Hospital_ID','Hospital_Name','Region_Oblast','Territorial_Hromada','Settlement','Patient_ID','Sample_ID','Sampling_Date','Sample_Matrix_Type','Bacterial_Species','Antimicrobial_Agent','MIC_Operator','MIC_Value','Zone_Diameter','SIR_Category','Interpretation_Standard'];
 const nav=[{id:'overview' as Tab,label:'Огляд системи',icon:LayoutDashboard,group:'РОБОЧА ПАНЕЛЬ'},{id:'facilities' as Tab,label:'Реєстр закладів',icon:Building2,group:'РОБОЧА ПАНЕЛЬ'},{id:'visits' as Tab,label:'Моніторингові візити',icon:CalendarDays,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'ipc' as Tab,label:'Оцінювання IPC',icon:ClipboardCheck,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'training' as Tab,label:'Навчальні заходи',icon:GraduationCap,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'amr' as Tab,label:'Моніторинг AMR',icon:Microscope,group:'ЛАБОРАТОРНИЙ НАГЛЯД'},{id:'recommendations' as Tab,label:'Рекомендації',icon:BadgeCheck,group:'ІНСТРУМЕНТИ'},{id:'imports' as Tab,label:'Імпорт даних',icon:FileSpreadsheet,group:'ІНСТРУМЕНТИ'},{id:'legal' as Tab,label:'Моніторинг НПА',icon:FileSpreadsheet,group:'НОРМАТИВНО-ПРАВОВА БАЗА'},{id:'users' as Tab,label:'Користувачі та доступ',icon:Users,group:'АДМІНІСТРУВАННЯ'}];
@@ -38,7 +48,7 @@ export default function App(){
    if(!parsed.length){setNotice('У файлі немає рядків із Sample_ID та Bacterial_Species.');return;}
    setNotice('Передавання '+parsed.length+' рядків до D1…');
    const response=await fetch('/api/amr/ast/import',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({sourceName:file.name,rows:parsed})});
-   const result=await response.json() as {status?:string;rowsProcessed?:number;rowsRejected?:number;message?:string;error?:string};
+   const result=await readApiJson<{status?:string;rowsProcessed?:number;rowsRejected?:number;message?:string;error?:string}>(response);
    if(!response.ok){setNotice('Імпорт не виконано: '+(result.message||result.error||('HTTP '+response.status)));return;}
    await loadFromD1(false);
    setNotice('Імпорт завершено. Опрацьовано: '+(result.rowsProcessed??parsed.length)+', відхилено: '+(result.rowsRejected??0)+'.');
@@ -72,8 +82,7 @@ export default function App(){
  const loadFromD1=async(activate=true)=>{
   try{
    const response=await fetch('/api/amr/ast?limit=1000',{credentials:'same-origin',headers:{accept:'application/json'}});
-   const body=await response.text();let result:{rows?:Row[];error?:string;message?:string}={};
-   try{result=body?JSON.parse(body):{};}catch{throw new Error('API повернув не JSON. HTTP '+response.status);}
+   const result=await readApiJson<{rows?:Row[];error?:string;message?:string}>(response);
    if(!response.ok){setNotice('API D1: HTTP '+response.status+' — '+(result.message||result.error||response.statusText));return false;}
    const saved=result.rows||[];setRows(saved);setNotice('Завантажено з D1: '+saved.length+' результатів AST.');
    if(activate)setTab('amr');return true;
@@ -83,14 +92,14 @@ export default function App(){
   setNotice('Збереження AST-запису…');
   try{
    const response=await fetch('/api/amr/ast/manual',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({sourceName:'Ручне введення AST',rows:[manualRow]})});
-   const result=await response.json() as {message?:string;error?:string};
+   const result=await readApiJson<{message?:string;error?:string}>(response);
    if(!response.ok){setNotice('Не вдалося зберегти запис: '+(result.message||result.error||('HTTP '+response.status)));return;}
    setManualRow(emptyAstRow);await loadFromD1(false);setNotice('AST-запис збережено в D1.');
   }catch(error){setNotice('Помилка збереження: '+(error instanceof Error?error.message:String(error)));}
  };
  const loadAdminUsers=async()=>{
   const response=await fetch('/api/admin/users',{credentials:'same-origin'});
-  const data=await response.json() as {users?:any[];message?:string};
+  const data=await readApiJson<{users?:any[];message?:string}>(response);
   if(!response.ok)throw new Error(data.message||'Не вдалося отримати перелік профілів.');
   setAdminUsers(data.users||[]);
  };
@@ -99,10 +108,10 @@ export default function App(){
   setNotice('Збереження профілю користувача…');
   try{
    const response=await fetch('/api/admin/users',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({...userDraft,facilityCodes})});
-   const data=await response.json() as {message?:string;error?:string};
+   const data=await readApiJson<{message?:string;error?:string}>(response);
    if(!response.ok){setNotice('Профіль не збережено: '+(data.message||data.error||('HTTP '+response.status)));return;}
    await loadAdminUsers();setUserDraft({email:'',fullName:'',role:'operator',isActive:true,allFacilities:false,facilityCodes:'',password:''});
-   setNotice('Профіль збережено. Переконайтеся, що email також дозволено в політиці Cloudflare Access.');
+   setNotice('Профіль збережено. Надайте користувачу пароль і призначені коди закладів.');
   }catch(error){setNotice('Помилка роботи з профілями: '+(error instanceof Error?error.message:String(error)));}
  };
  const submitLogin=async(event:FormEvent)=>{
@@ -123,8 +132,8 @@ export default function App(){
   const initialize=async()=>{
    try{
     const response=await fetch('/api/auth/me',{credentials:'same-origin',headers:{accept:'application/json'}});
-    const data=await response.json() as {user?:{id:string;email:string;fullName:string;role:'admin'|'operator'|'analyst';isActive:boolean;allFacilities:boolean;facilityCodes:string[]};csrfToken?:string;message?:string;error?:string};
-    if(!response.ok||!data.user){const status=await fetch('/api/auth/status',{credentials:'same-origin'});const state=await status.json() as {setupRequired?:boolean;setupTokenConfigured?:boolean};if(alive){setSetupRequired(Boolean(state.setupRequired));setSetupTokenConfigured(Boolean(state.setupTokenConfigured));setAuthError(state.setupRequired&&!state.setupTokenConfigured?'Початкове налаштування ще не готове: адміністратор має додати INITIAL_ADMIN_SETUP_TOKEN у секрети Worker.':data.message||data.error||'Введіть облікові дані для входу.');setAuthLoading(false);}return;}
+    const data=await readApiJson<{user?:{id:string;email:string;fullName:string;role:'admin'|'operator'|'analyst';isActive:boolean;allFacilities:boolean;facilityCodes:string[]};csrfToken?:string;message?:string;error?:string}>(response);
+    if(!response.ok||!data.user){const status=await fetch('/api/auth/status',{credentials:'same-origin'});const state=await readApiJson<{setupRequired?:boolean;setupTokenConfigured?:boolean}>(status);if(alive){setSetupRequired(Boolean(state.setupRequired));setSetupTokenConfigured(Boolean(state.setupTokenConfigured));setAuthError(state.setupRequired&&!state.setupTokenConfigured?'Початкове налаштування ще не готове: адміністратор має додати INITIAL_ADMIN_SETUP_TOKEN у секрети Worker.':data.message||data.error||'Введіть облікові дані для входу.');setAuthLoading(false);}return;}
     if(alive){setUser(data.user);setCsrfToken(data.csrfToken||'');}
     await loadFromD1(false);
     if(data.user.role==='admin')await loadAdminUsers();
