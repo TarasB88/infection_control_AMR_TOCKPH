@@ -1,19 +1,19 @@
-interface D1Result<T = Record<string, unknown>> {
+interface LocalD1Result<T = Record<string, unknown>> {
   success: boolean;
   results?: T[];
   error?: string;
 }
 
-interface D1PreparedStatement {
+interface LocalD1PreparedStatement {
   first<T = Record<string, unknown>>(): Promise<T | null>;
 }
 
-interface D1Database {
-  prepare(query: string): D1PreparedStatement;
+interface LocalD1Database {
+  prepare(query: string): LocalD1PreparedStatement;
 }
 
-interface Env {
-  DB?: D1Database;
+interface WorkerEnv {
+  DB?: LocalD1Database;
   ASSETS?: { fetch(request: Request): Promise<Response> };
 }
 
@@ -28,7 +28,7 @@ const json = (data: unknown, status = 200): Response =>
   });
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === 'GET' && url.pathname === '/api/health') {
