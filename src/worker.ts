@@ -275,7 +275,7 @@ export default {
         const result = await env.DB.prepare(
           `SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,
              i.hromada AS Territorial_Hromada, i.settlement AS Settlement,
-             i.pseudonymous_patient_id AS Patient_ID, i.sample_id AS Sample_ID,
+             COALESCE(i.pseudonymous_patient_id, '') AS Patient_ID, i.sample_id AS Sample_ID,
              i.sampling_date AS Sampling_Date, i.sample_matrix_type AS Sample_Matrix_Type,
              i.bacterial_species AS Bacterial_Species, a.antimicrobial_agent AS Antimicrobial_Agent,
              a.mic_operator AS MIC_Operator, a.mic_value AS MIC_Value,
