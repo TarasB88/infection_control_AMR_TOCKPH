@@ -442,12 +442,21 @@ export default {
 
     if (url.pathname === '/api/auth/status' && request.method === 'GET') {
       if (!env.DB) return json({ error: 'database_unavailable' }, 503);
-      const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles').first<{total:number}>();
-      return json({ setupRequired: (count?.total ?? 0) === 0, setupTokenConfigured: Boolean(env.INITIAL_ADMIN_SETUP_TOKEN) });
+      const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles').first<{ total: number }>();
+      return json({
+        setupRequired: (count?.total ?? 0) === 0,
+        setupTokenConfigured: Boolean(env.INITIAL_ADMIN_SETUP_TOKEN),
+      });
     }
-    if (url.pathname === '/api/auth/setup') return handleInitialSetup(request, env);
-    if (url.pathname === '/api/auth/login') return handleLogin(request, env);
-    if (url.pathname === '/api/auth/logout' && request.method === 'POST') return handleLogout(request, env);
+    if (url.pathname === '/api/auth/setup') {
+      return handleInitialSetup(request, env);
+    }
+    if (url.pathname === '/api/auth/login') {
+      return handleLogin(request, env);
+    }
+    if (url.pathname === '/api/auth/logout' && request.method === 'POST') {
+      return handleLogout(request, env);
+    }
 
     if (url.pathname === '/api/auth/me' && request.method === 'GET') {
       const authenticated = await getAuthenticatedUser(request, env);
@@ -474,21 +483,23 @@ export default {
         ? ''
         : codes.length ? 'WHERE f.external_code IN (' + codes.map(() => '?').join(',') + ')' : 'WHERE 1 = 0';
       try {
-        const result = await env.DB.prepare(
-          `SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,
-             i.hromada AS Territorial_Hromada, i.settlement AS Settlement,
-             COALESCE(i.pseudonymous_patient_id, '') AS Patient_ID, i.sample_id AS Sample_ID,
-             i.sampling_date AS Sampling_Date, i.sample_matrix_type AS Sample_Matrix_Type,
-             i.bacterial_species AS Bacterial_Species, a.antimicrobial_agent AS Antimicrobial_Agent,
-             a.mic_operator AS MIC_Operator, a.mic_value AS MIC_Value,
-             a.zone_diameter AS Zone_Diameter, a.sir_category AS SIR_Category,
-             a.interpretation_standard AS Interpretation_Standard
-           FROM ast_results a
-           INNER JOIN isolates i ON i.id = a.isolate_id
-           INNER JOIN facilities f ON f.id = i.facility_id
-           ${scopeSql}
-           ORDER BY i.sampling_date DESC, i.sample_id
-           LIMIT ? OFFSET ?`,
+        const sql = [
+          'SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,',
+          'i.hromada AS Territorial_Hromada, i.settlement AS Settlement,',
+          "COALESCE(i.pseudonymous_patient_id, '') AS Patient_ID, i.sample_id AS Sample_ID,",
+          'i.sampling_date AS Sampling_Date, i.sample_matrix_type AS Sample_Matrix_Type,',
+          'i.bacterial_species AS Bacterial_Species, a.antimicrobial_agent AS Antimicrobial_Agent,',
+          'a.mic_operator AS MIC_Operator, a.mic_value AS MIC_Value,',
+          'a.zone_diameter AS Zone_Diameter, a.sir_category AS SIR_Category,',
+          'a.interpretation_standard AS Interpretation_Standard',
+          'FROM ast_results a',
+          'INNER JOIN isolates i ON i.id = a.isolate_id',
+          'INNER JOIN facilities f ON f.id = i.facility_id',
+          scopeSql,
+          'ORDER BY i.sampling_date DESC, i.sample_id',
+          'LIMIT ? OFFSET ?',
+        ].filter(Boolean).join(' ');
+        const result = await env.DB.prepare(sql)
         ).bind(...codes, limit, offset).all<AstRow>();
         return json({ rows: result.results ?? [], count: result.results?.length ?? 0, limit, offset });
       } catch {
