@@ -170,6 +170,7 @@ const handleLogin = async (request:Request, env:WorkerEnv):Promise<Response> => 
   try { body=await request.json() as typeof body; } catch { return json({error:'invalid_json'},400); }
   const email=text(body.email).toLowerCase(), password=String(body.password??'');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length>128) return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
+  await env.DB.prepare("DELETE FROM login_attempts WHERE attempted_at < datetime('now','-1 day')").run();
   const attempts=await env.DB.prepare("SELECT COUNT(*) AS total FROM login_attempts WHERE email=? AND attempted_at > datetime('now','-15 minutes')").bind(email).first<{total:number}>();
   if ((attempts?.total??0)>=8) return json({error:'login_rate_limited',message:'Забагато невдалих спроб. Спробуйте через 15 хвилин.'},429);
   const profile=await env.DB.prepare('SELECT id,email,full_name,role,is_active,all_facilities,password_salt,password_hash FROM user_profiles WHERE email=? COLLATE NOCASE').bind(email)
@@ -248,6 +249,7 @@ const handleAdminUsers = async (request: Request, env: WorkerEnv, actor: Authent
     env.DB.prepare('INSERT INTO audit_log (id, actor_id, action, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?, ?)')
       .bind(crypto.randomUUID(), actor.id, 'user_profile_upsert', 'user_profile', userId, JSON.stringify({ email, role, isActive, allFacilities, facilityCodesCount: facilityCodes.length })),
   ];
+  if (!isActive || password) statements.push(env.DB.prepare('DELETE FROM user_sessions WHERE user_id=? AND id<>?').bind(userId, actor.id === userId ? actor.sessionId : ''));
   if (password) {
     const salt = randomToken(16);
     const passwordHash = await hashPassword(password, salt);
