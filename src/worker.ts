@@ -8,6 +8,7 @@ interface LocalD1Result<T = Record<string, unknown>> {
 interface LocalD1PreparedStatement {
   bind(...values: unknown[]): LocalD1PreparedStatement;
   first<T = Record<string, unknown>>(): Promise<T | null>;
+  all<T = Record<string, unknown>>(): Promise<LocalD1Result<T>>;
   run<T = Record<string, unknown>>(): Promise<LocalD1Result<T>>;
 }
 
@@ -261,6 +262,34 @@ export default {
         }, result?.ok === 1 ? 200 : 503);
       } catch {
         return json({ status: 'error', database: 'connection_failed' }, 503);
+      }
+    }
+
+    if (url.pathname === '/api/amr/ast' && request.method === 'GET') {
+      if (!authorized(request, env)) return json({ error: 'unauthorized' }, 401);
+      if (!env.DB) return json({ error: 'database_unavailable' }, 503);
+      const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 500)));
+      const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
+      if (!Number.isFinite(limit) || !Number.isFinite(offset)) return json({ error: 'invalid_pagination' }, 400);
+      try {
+        const result = await env.DB.prepare(
+          `SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,
+             i.hromada AS Territorial_Hromada, i.settlement AS Settlement,
+             i.pseudonymous_patient_id AS Patient_ID, i.sample_id AS Sample_ID,
+             i.sampling_date AS Sampling_Date, i.sample_matrix_type AS Sample_Matrix_Type,
+             i.bacterial_species AS Bacterial_Species, a.antimicrobial_agent AS Antimicrobial_Agent,
+             a.mic_operator AS MIC_Operator, a.mic_value AS MIC_Value,
+             a.zone_diameter AS Zone_Diameter, a.sir_category AS SIR_Category,
+             a.interpretation_standard AS Interpretation_Standard
+           FROM ast_results a
+           INNER JOIN isolates i ON i.id = a.isolate_id
+           INNER JOIN facilities f ON f.id = i.facility_id
+           ORDER BY i.sampling_date DESC, i.sample_id
+           LIMIT ? OFFSET ?`,
+        ).bind(limit, offset).all<AstRow>();
+        return json({ rows: result.results ?? [], count: result.results?.length ?? 0, limit, offset });
+      } catch {
+        return json({ error: 'query_failed', message: 'Не вдалося прочитати AST з D1.' }, 500);
       }
     }
 
