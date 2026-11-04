@@ -1,3 +1,4 @@
+// Build source: current main revision; keep this marker to verify fresh Cloudflare builds.
 interface LocalD1Result<T = Record<string, unknown>> {
   success: boolean;
   results?: T[];
