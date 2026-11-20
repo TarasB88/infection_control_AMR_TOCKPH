@@ -477,23 +477,16 @@ export default {
     }
 
     if (url.pathname === '/api/amr/ast' && request.method === 'GET') {
-      const authenticated = await getAuthenticatedUser(request, env);
-      if (authenticated.error) return authenticated.error;
+      // Temporary read-only access; do not expose patient identifiers or pseudonyms.
       if (!env.DB) return json({ error: 'database_unavailable' }, 503);
       const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 500)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
       if (!Number.isFinite(limit) || !Number.isFinite(offset)) return json({ error: 'invalid_pagination' }, 400);
-      const actor = authenticated.user;
-      const codes = actor.role === 'admin' || actor.all_facilities === 1 ? [] : actor.facilityCodes;
-      const scopeSql = actor.role === 'admin' || actor.all_facilities === 1
-        ? ''
-        : codes.length ? 'WHERE f.external_code IN (' + codes.map(() => '?').join(',') + ')' : 'WHERE 1 = 0';
       try {
-        // Build SQL from plain string fragments to avoid malformed template-literal escaping in CI builds.
         const sql = [
           'SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,',
           'i.hromada AS Territorial_Hromada, i.settlement AS Settlement,',
-          "COALESCE(i.pseudonymous_patient_id, '') AS Patient_ID, i.sample_id AS Sample_ID,",
+          "'' AS Patient_ID, i.sample_id AS Sample_ID,",
           'i.sampling_date AS Sampling_Date, i.sample_matrix_type AS Sample_Matrix_Type,',
           'i.bacterial_species AS Bacterial_Species, a.antimicrobial_agent AS Antimicrobial_Agent,',
           'a.mic_operator AS MIC_Operator, a.mic_value AS MIC_Value,',
@@ -502,13 +495,11 @@ export default {
           'FROM ast_results a',
           'INNER JOIN isolates i ON i.id = a.isolate_id',
           'INNER JOIN facilities f ON f.id = i.facility_id',
-          scopeSql,
           'ORDER BY i.sampling_date DESC, i.sample_id',
           'LIMIT ? OFFSET ?',
-        ].filter(Boolean).join(' ');
-        const result = await env.DB.prepare(sql)
-          .bind(...codes, limit, offset).all<AstRow>();
-        return json({ rows: result.results ?? [], count: result.results?.length ?? 0, limit, offset });
+        ].join(' ');
+        const result = await env.DB.prepare(sql).bind(limit, offset).all<AstRow>();
+        return json({ rows: result.results ?? [], count: result.results?.length ?? 0, limit, offset, access: 'public_read_only' });
       } catch {
         return json({ error: 'query_failed', message: 'Не вдалося прочитати AST з D1.' }, 500);
       }
