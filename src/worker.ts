@@ -455,7 +455,7 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
   if (actor.role !== 'admin') return json({ error: 'forbidden', message: 'Потрібна роль адміністратора.' }, 403);
   if (request.method === 'GET') {
     try {
-      const result = await callGoogleSheetsBridge(env, { action: 'listSheets' });
+      const result = await callGoogleSheetsBridge(env, { action: 'inspectSheets' });
       const sheets = Array.isArray(result.sheets) ? result.sheets as Array<Record<string, unknown>> : [];
       return json({
         configured: true,
@@ -465,6 +465,8 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
           rows: Number(sheet.rows ?? 0),
           columns: Number(sheet.columns ?? 0),
           // The Users worksheet is deliberately never exposed through this endpoint.
+          headers: Array.isArray(sheet.headers) ? sheet.headers.map(text) : [],
+          // User credentials are never returned; only the column names are exposed to administrators.
           readable: text(sheet.name) !== 'Users',
         })),
       });
