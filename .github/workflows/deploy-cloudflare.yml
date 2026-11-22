@@ -29,6 +29,8 @@ jobs:
         run: node --check scripts/generate-password-hash.mjs
       - name: Build frontend and type-check
         run: npm run build
+      - name: Validate Worker bundle and Wrangler bindings
+        run: npx wrangler deploy --dry-run --outdir .wrangler-dry-run
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
