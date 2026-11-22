@@ -102,6 +102,10 @@ export default function App(){
       if(name==='Users'&&(sessionUser||user)?.role!=='admin')continue;
       const table=await readSheetTable(name);
       if(!table.headers.length&&name!=='Users'){
+        if((sessionUser||user)?.role!=='admin'){
+          loaded[name]=table;
+          continue;
+        }
         const headers=DEFAULT_HEADERS[name];
         await appendSheetRows(name,headers,[headers]);
         loaded[name]={headers,rows:[]};
@@ -306,7 +310,7 @@ export default function App(){
     {id:'users',label:'Користувачі та доступ',icon:Users,group:'АДМІНІСТРУВАННЯ'},
   ];
   const activeHeaders=activeSheet?sheets[activeSheet]?.headers||[]:[];
-  const canWrite=user.role!=='analyst';
+  const canWrite=user.role!=='analyst'&&(user.role==='admin'||!['training','legal'].includes(tab));
   const addForm=(sheet:GoogleSheetTab)=>{setDraft(Object.fromEntries((sheets[sheet]?.headers||[]).map(h=>[h,''])));setShowForm(true);};
   const activeRecords=activeSheet?sheets[activeSheet]?.rows||[]:[];
   const selectedFacilities=activeSheet==='Facilities'?visibleFacilities:[];
