@@ -19,6 +19,7 @@ export const readSheetTable=async(sheet:GoogleSheetTab):Promise<{headers:string[
 export const appendSheetRows=async(sheet:GoogleSheetTab,headers:string[],rows:Array<Array<string|number|boolean>>):Promise<void>=>{
  if(!rows.length)return;await api('/api/sheets/'+encodeURIComponent(sheet),{method:'POST',body:JSON.stringify({headers,rows})});
 };
+export const changePassword=async(currentPassword:string,newPassword:string):Promise<AppSessionUser>=>{const result=await api<{user:AppSessionUser}>('/api/auth/change-password',{method:'POST',body:JSON.stringify({currentPassword,newPassword})});return result.user;};
 export const createUser=async(input:{username:string;password:string;email:string;displayName:string;role:'admin'|'operator'|'analyst';allFacilities:boolean;facilityCodes:string[];isActive:boolean}):Promise<void>=>{
  await api('/api/admin/users',{method:'POST',body:JSON.stringify(input)});
 };
