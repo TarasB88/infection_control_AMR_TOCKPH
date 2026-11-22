@@ -20,6 +20,7 @@
 3. Налаштуйте OAuth consent screen (назва застосунку, контакт, тип користувачів/аудиторія).
 4. Створіть credential типу **OAuth Client ID → Web application**.
 5. У Authorized JavaScript origins додайте:
+   - `https://docs.google.com` (потрібно для сторінки Picker у iframe; також додайте цей origin у Website restrictions API key).
    - `https://infection-control-amr-tockph.burdataras.workers.dev`
    - локальний origin для розробки, наприклад `http://localhost:5173`.
 6. Скопіюйте OAuth Client ID. Client ID є публічним параметром; не створюйте й не використовуйте client secret для цього SPA token flow.
