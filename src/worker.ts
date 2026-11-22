@@ -24,8 +24,6 @@ interface WorkerEnv {
   ASSETS?: { fetch(request: Request): Promise<Response> };
   INITIAL_ADMIN_SETUP_TOKEN?: string;
   PATIENT_HMAC_SECRET?: string;
-  GOOGLE_SERVICE_ACCOUNT_EMAIL?: string;
-  GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?: string;
 }
 
 type AstRow = {
@@ -68,12 +66,10 @@ const json = (data: unknown, status = 200): Response =>
 const text = (value: unknown): string => String(value ?? '').trim();
 
 
-const GOOGLE_TARGET_SPREADSHEET_ID='1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc';
 const GOOGLE_FACILITY_SOURCES=[
  {key:'registry',spreadsheetId:'10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew',sheetId:0},
  {key:'monitoring',spreadsheetId:'12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ',sheetId:933221082},
 ];
-const GOOGLE_ALLOWED_SHEETS=['Facilities','Facility_IPC_Profile','IPC_Assessments','Legal_Acts','Training_Events','Training_Facility_Stats','AST_Data','WGS_Staging','Dictionaries'];
 const FACILITY_FIELD_ALIASES:Record<string,string[]>={
  edrpou:['єдрпоу','кодєдрпоу','єдрпоукод','єдрпоузоз','кодзаєдрпоу','кодзгідноєдрпоу','кодєдрпоузакладу','кодзакладу','кодзакладуєдрпоу','edrpou','hospitalid','facilitycode','externalcode'],
  name:['назва','назвазоз','назвазакладу','повнаназва','повнаназвазакладу','найменування','найменуваннязакладу','закладохорониздоровя','hospitalname','facilityname'],
@@ -90,43 +86,6 @@ const FACILITY_FIELD_ALIASES:Record<string,string[]>={
  network_status:['статусуспроможніймережі','включеннядоспоможноїмережі','включеннядоспроможноїмережі','спроможнамережа','статусмережі','networkstatus'],
  monitoring_years:['рокимоніторингу','рікмоніторингу','рокипроведеннямоніторингу','monitoringyears','monitoringyear'],
 };
-let googleTokenCache:{token:string;expiresAt:number}|null=null;
-const b64url=(bytes:Uint8Array):string=>{let binary='';bytes.forEach(b=>binary+=String.fromCharCode(b));return btoa(binary).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');};
-const googleToken=async(env:WorkerEnv):Promise<string>=>{
- const now=Math.floor(Date.now()/1000);if(googleTokenCache&&googleTokenCache.expiresAt>now+60)return googleTokenCache.token;
- const email=text(env.GOOGLE_SERVICE_ACCOUNT_EMAIL),pem=text(env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
- if(!email||!pem)throw new Error('google_service_account_not_configured');
- const keyText=pem.replace(/\\n/g,'\n').replace(/-----BEGIN PRIVATE KEY-----/g,'').replace(/-----END PRIVATE KEY-----/g,'').replace(/\s/g,'');
- let raw:string;try{raw=atob(keyText);}catch{throw new Error('google_service_account_key_invalid');}
- const keyBytes=Uint8Array.from(raw,c=>c.charCodeAt(0));
- let key:CryptoKey;try{key=await crypto.subtle.importKey('pkcs8',keyBytes,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['sign']);}catch{throw new Error('google_service_account_key_invalid');}
- const enc=(value:string)=>b64url(new TextEncoder().encode(value));
- const unsigned=enc(JSON.stringify({alg:'RS256',typ:'JWT'}))+'.'+enc(JSON.stringify({iss:email,scope:'https://www.googleapis.com/auth/spreadsheets',aud:'https://oauth2.googleapis.com/token',iat:now,exp:now+3600}));
- const signature=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',key,new TextEncoder().encode(unsigned));
- const assertion=unsigned+'.'+b64url(new Uint8Array(signature));
- const response=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion})});
- if(!response.ok)throw new Error('google_oauth_http_'+response.status);
- const result=await response.json() as {access_token?:string;expires_in?:number};
- if(!result.access_token)throw new Error('google_oauth_token_missing');
- googleTokenCache={token:result.access_token,expiresAt:now+Number(result.expires_in||3600)};return result.access_token;
-};
-const sheetsApi=async(env:WorkerEnv,path:string,init:RequestInit={}):Promise<any>=>{
- const token=await googleToken(env);
- const response=await fetch('https://sheets.googleapis.com/v4'+path,{...init,headers:{authorization:'Bearer '+token,accept:'application/json',...(init.headers||{})}});
- if(!response.ok){const detail=await response.text().catch(()=>'');throw new Error('google_sheets_http_'+response.status+(detail?':'+detail.slice(0,160):''));}
- return response.status===204?{}:response.json();
-};
-type SheetMeta={properties:{sheetId:number;title:string;gridProperties?:{rowCount?:number;columnCount?:number}}};
-const sheetMeta=async(env:WorkerEnv,id:string):Promise<SheetMeta[]>=>{
- const q=new URLSearchParams({fields:'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'});
- const data=await sheetsApi(env,'/spreadsheets/'+encodeURIComponent(id)+'?'+q);return(data.sheets||[]) as SheetMeta[];
-};
-const readValues=async(env:WorkerEnv,id:string,range:string,render='FORMATTED_VALUE'):Promise<unknown[][]>=>{
- const q=new URLSearchParams({valueRenderOption:render,majorDimension:'ROWS'});
- const data=await sheetsApi(env,'/spreadsheets/'+encodeURIComponent(id)+'/values/'+encodeURIComponent(range)+'?'+q);
- return Array.isArray(data.values)?data.values as unknown[][]:[];
-};
-const quoteTab=(name:string)=>"'"+name.replace(/'/g,"''")+"'";
 const normalizeHeader=(value:unknown)=>text(value).toLocaleLowerCase('uk-UA').replace(/[’'"]/g,'').replace(/[^0-9a-zа-яіїєґ]/gi,'');
 const fieldForHeader=(header:unknown)=>{
  const value=normalizeHeader(header);
@@ -181,73 +140,6 @@ const mergedFacilities=async(env:WorkerEnv)=>{
  return{records,sourceA:a,sourceB:b,duplicateRegistryIds:duplicates,duplicateMonitoringRows,incompleteRows,
   summary:{sourceRegistryRows:a.rowCount,sourceMonitoringRows:b.rowCount,duplicateRegistryIds:duplicates.length,duplicateMonitoringRows,incompleteRows}};
 };
-const targetRows=async(env:WorkerEnv,sheet:string)=>{
- if(!GOOGLE_ALLOWED_SHEETS.includes(sheet))throw new Error('sheet_not_allowed');
- const values=await readValues(env,GOOGLE_TARGET_SPREADSHEET_ID,quoteTab(sheet)+'!A:ZZ');
- const headers=(values[0]||[]).map(text);
- const rows=values.slice(1).filter(row=>row.some(text)).map(row=>{const item:Record<string,string>={};headers.forEach((h,i)=>{if(h)item[h]=text(row[i]);});return item;});
- return{headers,rows,rowCount:rows.length};
-};
-const inspectSheets=async(env:WorkerEnv)=>{
- const meta=await sheetMeta(env,GOOGLE_TARGET_SPREADSHEET_ID);
- const visible=meta.filter(s=>GOOGLE_ALLOWED_SHEETS.includes(s.properties.title));
- const sheets=await Promise.all(visible.map(async s=>{
-  const tab=quoteTab(s.properties.title);
-  const [headerValues,firstColumn]=await Promise.all([
-   readValues(env,GOOGLE_TARGET_SPREADSHEET_ID,tab+'!1:1'),
-   readValues(env,GOOGLE_TARGET_SPREADSHEET_ID,tab+'!A2:A'),
-  ]);
-  const headers=(headerValues[0]||[]).map(text);
-  const rows=firstColumn.filter(row=>text(row[0])).length;
-  return{name:s.properties.title,rows,columns:headers.length,headers};
- }));
- return{spreadsheetId:GOOGLE_TARGET_SPREADSHEET_ID,sheets};
-};
-const safeCell=(value:string)=>/^[=+@-]/.test(value)&&!Number.isFinite(Number(value))?"'"+value:value;
-const facilitySync=async(env:WorkerEnv,commit:boolean)=>{
- const merged=await mergedFacilities(env),target=await targetRows(env,'Facilities');
- if(!target.headers.length)throw new Error('target_facilities_headers_missing');
- const fields=target.headers.map(fieldForHeader),keyIndex=fields.indexOf('edrpou');if(keyIndex<0)throw new Error('target_edrpou_column_missing');
- const formulas=await readValues(env,GOOGLE_TARGET_SPREADSHEET_ID,quoteTab('Facilities')+'!A:ZZ','FORMULA'),existing=formulas.slice(1);
- const counts=new Map<string,number>();existing.forEach(row=>{const k=normalizeCode(row[keyIndex]);if(k)counts.set(k,(counts.get(k)||0)+1);});
- const duplicateTargets=[...counts.entries()].filter(([,n])=>n>1).map(([k])=>k),duplicateSet=new Set(duplicateTargets),index=new Map<string,number>();
- existing.forEach((row,i)=>{const k=normalizeCode(row[keyIndex]);if(k&&!duplicateSet.has(k))index.set(k,i);});
- const eligible=merged.records.filter(r=>!duplicateSet.has(r.edrpou)),updates:Array<{range:string;values:string[][]}>=[],newRows:string[][]=[];
- let newCount=0,updateCount=0,unchanged=0;
- const colName=(n:number)=>{let x=n,out='';while(x){const rem=(x-1)%26;out=String.fromCharCode(65+rem)+out;x=Math.floor((x-1)/26);}return out;};
- eligible.forEach(record=>{
-  const i=index.get(record.edrpou);
-  if(i==null){const row=new Array(target.headers.length).fill('');target.headers.forEach((h,c)=>{const f=fields[c];if(f&&record[f])row[c]=safeCell(record[f]);});newRows.push(row);newCount++;return;}
-  let changed=false;const current=existing[i]||[];
-  target.headers.forEach((h,c)=>{const f=fields[c];if(!f||!record[f])return;const value=safeCell(record[f]);if(text(current[c])!==value&&!String(current[c]??'').startsWith('=')){updates.push({range:quoteTab('Facilities')+'!'+colName(c+1)+(i+2),values:[[value]]});changed=true;}});
-  if(changed)updateCount++;else unchanged++;
- });
- const report={ok:true,mode:commit?'sync':'preview',
-  registry:{rows:merged.sourceA.rowCount,invalidRows:merged.sourceA.invalidRows,duplicateIds:merged.duplicateRegistryIds.length,headers:merged.sourceA.headers},
-  monitoring:{rows:merged.sourceB.rowCount,invalidRows:merged.sourceB.invalidRows,duplicateRows:merged.duplicateMonitoringRows,headers:merged.sourceB.headers},
-  target:{rows:target.rowCount,headers:target.headers,mappedColumns:Object.fromEntries(target.headers.map((h,i)=>[h,fields[i]]).filter(([,f])=>f)),unmappedHeaders:target.headers.filter((h,i)=>!fields[i])},
-  summary:{sourceFacilities:merged.records.length,incompleteRows:merged.incompleteRows,duplicateRegistryIds:merged.duplicateRegistryIds.length,duplicateTargetIds:duplicateTargets.length,newRecords:newCount,recordsToUpdate:updateCount,recordsUnchanged:unchanged,skippedForAmbiguousTarget:duplicateTargets.length},
-  sample:eligible.slice(0,5).map(r=>({edrpou:r.edrpou,name:r.name,oblast:r.oblast,hromada:r.hromada,care_level:r.care_level,network_status:r.network_status}))};
- if(!commit)return report;
- if(updates.length)await sheetsApi(env,'/spreadsheets/'+encodeURIComponent(GOOGLE_TARGET_SPREADSHEET_ID)+'/values:batchUpdate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({valueInputOption:'RAW',data:updates})});
- if(newRows.length){const first=formulas.length+1,last=first+newRows.length-1,range=quoteTab('Facilities')+'!A'+first+':'+colName(target.headers.length)+last;
-  await sheetsApi(env,'/spreadsheets/'+encodeURIComponent(GOOGLE_TARGET_SPREADSHEET_ID)+'/values/'+encodeURIComponent(range)+'?valueInputOption=RAW',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({majorDimension:'ROWS',values:newRows})});}
- return{...report,inserted:newRows.length,updated:updateCount,unchanged};
-};
-const callGoogleSheets=async(env:WorkerEnv,payload:Record<string,unknown>):Promise<Record<string,unknown>>=>{
- const action=text(payload.action),sheet=text(payload.sheet);
- if(action==='getFacilities'){const result=await mergedFacilities(env);return{ok:true,records:result.records.map(r=>({edrpou:r.edrpou,name:r.name,address:r.address,oblast:r.oblast,district:r.district,hromada:r.hromada,settlement:r.settlement,ownership:r.ownership,care_level:r.care_level,network_status:r.network_status,monitoring_years:r.monitoring_years})),summary:result.summary};}
- if(action==='inspectSheets'){const result=await inspectSheets(env);return{ok:true,...result};}
- if(action==='getRows'){if(sheet==='Users')throw new Error('users_sheet_requires_dedicated_auth_flow');const result=await targetRows(env,sheet);return{ok:true,...result,sheet};}
- if(action==='previewFacilitiesSync')return await facilitySync(env,false);
- if(action==='syncFacilities'){if(payload.confirm!==true)throw new Error('confirmation_required');return await facilitySync(env,true);}
- if(action==='syncAst'){const result=await targetRows(env,'AST_Data');return{ok:true,...result};}
- if(['getFacilitiesSyncStatus','enableFacilitiesAutoSync','disableFacilitiesAutoSync'].includes(action))return{ok:true,autoSync:{enabled:false,mode:'manual',provider:'cloudflare_worker'}};
- throw new Error('unsupported_google_sheets_action');
-};
-
-
-
 const constantTimeEqual = (left: string, right: string): boolean => {
   const a = new TextEncoder().encode(left);
   const b = new TextEncoder().encode(right);
@@ -493,7 +385,7 @@ const validateRows = (input: unknown): { rows: AstRow[]; issues: { rowNumber: nu
   return { rows, issues };
 };
 
-const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' | 'manual' | 'google_sheets'): Promise<Response> => {
+const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' | 'manual'): Promise<Response> => {
   const authenticated = await getAuthenticatedUser(request, env);
   if (authenticated.error) return authenticated.error;
   const actor = authenticated.user;
@@ -612,124 +504,6 @@ const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' |
 };
 
 
-const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: AuthenticatedUser): Promise<Response> => {
-  if (actor.role !== 'admin') return json({ error: 'forbidden', message: 'Потрібна роль адміністратора.' }, 403);
-  if (request.method === 'GET') {
-    try {
-      const result = await callGoogleSheets(env, { action: 'inspectSheets' });
-      const sheets = Array.isArray(result.sheets) ? result.sheets as Array<Record<string, unknown>> : [];
-      return json({
-        configured: true,
-        spreadsheetId: result.spreadsheetId ?? null,
-        sheets: sheets.map(sheet => ({
-          name: text(sheet.name),
-          rows: Number(sheet.rows ?? 0),
-          columns: Number(sheet.columns ?? 0),
-          // The Users worksheet is deliberately never exposed through this endpoint.
-          headers: Array.isArray(sheet.headers) ? sheet.headers.map(text) : [],
-          // Report structural defects without returning any row data.
-          headerIssues: (() => {
-            const headers = Array.isArray(sheet.headers) ? sheet.headers.map(text) : [];
-            const issues: string[] = [];
-            if (!headers.length) issues.push('missing_header_row');
-            if (headers.some(header => !header)) issues.push('blank_header');
-            const normalized = headers.map(header => header.toLocaleLowerCase());
-            if (new Set(normalized).size !== normalized.length) issues.push('duplicate_header');
-            if (Number(sheet.rows ?? 0) > 0 && headers.length === 0) issues.push('rows_without_headers');
-            return issues;
-          })(),
-          // The Users worksheet is intentionally excluded from generic read operations.
-          readable: text(sheet.name) !== 'Users',
-        })),
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'google_sheets_connection_failed';
-      const status = ['google_sheets_not_configured','google_service_account_not_configured'].includes(message) ? 503 : 502;
-      return json({ configured: status !== 503, connected: false, error: message }, status);
-    }
-  }
-  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-  let body: { action?: unknown; sheet?: unknown; confirm?: unknown };
-  try { body = await request.json() as typeof body; } catch { return json({ error: 'invalid_json' }, 400); }
-  const action = text(body.action);
-  const sheet = text(body.sheet);
-
-  if (['getFacilitiesSyncStatus', 'enableFacilitiesAutoSync', 'disableFacilitiesAutoSync'].includes(action)) {
-    try {
-      const result = await callGoogleSheets(env, { action });
-      return json({ autoSync: result.autoSync ?? null, ok: result.ok === true, created: result.created ?? [], deleted: result.deleted ?? 0 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'facility_auto_sync_configuration_failed';
-      return json({ error: 'facility_auto_sync_configuration_failed', message }, 502);
-    }
-  }
-  if (action === 'previewFacilities') {
-    try {
-      const result = await callGoogleSheets(env, { action: 'previewFacilitiesSync' });
-      return json(result);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'facility_sync_preview_failed';
-      return json({ error: 'facility_sync_preview_failed', message }, 502);
-    }
-  }
-  if (action === 'syncFacilities') {
-    if (body.confirm !== true) return json({ error: 'confirmation_required', message: 'Перед записом потрібне явне підтвердження.' }, 400);
-    try {
-      const result = await callGoogleSheets(env, { action: 'syncFacilities', confirm: true });
-      let auditLogged = false;
-      if (env.DB) {
-        try {
-          const audit = await env.DB.prepare(
-            'INSERT INTO audit_log (id, actor_id, action, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?, ?)',
-          ).bind(
-            crypto.randomUUID(), actor.id, 'google_sheets_facilities_sync', 'google_sheet', 'Facilities',
-            JSON.stringify({
-              inserted: Number(result.inserted ?? 0),
-              updated: Number(result.updated ?? 0),
-              unchanged: Number(result.unchanged ?? 0),
-              sourceFacilities: Number((result.summary as Record<string, unknown> | undefined)?.sourceFacilities ?? 0),
-              duplicateRegistryIds: Number((result.summary as Record<string, unknown> | undefined)?.duplicateRegistryIds ?? 0),
-              duplicateTargetIds: Number((result.summary as Record<string, unknown> | undefined)?.duplicateTargetIds ?? 0),
-            }),
-          ).run();
-          auditLogged = audit.success;
-        } catch {
-          auditLogged = false;
-        }
-      }
-      return json({ ...result, auditLogged });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'facility_sync_failed';
-      return json({ error: 'facility_sync_failed', message }, 502);
-    }
-  }
-  if (action === 'syncAst') {
-    try {
-      const result = await callGoogleSheets(env, { action: 'getRows', sheet: 'AST_Data' });
-      if (!Array.isArray(result.rows)) return json({ error: 'invalid_bridge_response' }, 502);
-      const syncRequest = new Request(request.url, {
-        method: 'POST',
-        headers: request.headers,
-        body: JSON.stringify({ sourceName: 'Google Sheets · AST_Data', rows: result.rows }),
-      });
-      return importAst(syncRequest, env, 'google_sheets');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'google_sheets_sync_failed';
-      return json({ error: 'google_sheets_sync_failed', message }, 502);
-    }
-  }
-  const allowed = ['Facilities', 'Facility_IPC_Profile', 'IPC_Assessments', 'Legal_Acts',
-    'Training_Events', 'Training_Facility_Stats', 'AST_Data', 'WGS_Staging', 'Dictionaries'];
-  if (action !== 'read' || !allowed.includes(sheet)) return json({ error: 'sheet_not_allowed' }, 400);
-  try {
-    const result = await callGoogleSheets(env, { action: 'getRows', sheet });
-    return json({ sheet, headers: result.headers ?? [], rows: result.rows ?? [], rowCount: result.rowCount ?? 0 });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'google_sheets_read_failed';
-    return json({ error: 'google_sheets_read_failed', message }, 502);
-  }
-};
-
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const url = new URL(request.url);
@@ -755,9 +529,8 @@ export default {
       const authenticated = await getAuthenticatedUser(request, env);
       if (authenticated.error) return authenticated.error;
       try {
-        const result = await callGoogleSheets(env, { action: 'getFacilities' });
-        if (!Array.isArray(result.records)) return json({ error: 'invalid_bridge_response' }, 502);
-        const records = (result.records as Array<Record<string, unknown>>).map(record => ({
+        const result = await mergedFacilities(env);
+        const records = result.records.map(record => ({
           edrpou: text(record.edrpou),
           name: text(record.name),
           oblast: text(record.oblast),
@@ -779,15 +552,13 @@ export default {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'facilities_source_unavailable';
-        const status = ['google_sheets_not_configured','google_service_account_not_configured'].includes(message) ? 503 : 502;
+        const status = 502;
         return json({
           error: 'facilities_unavailable',
           message,
           hint: message.startsWith('source_export_http_')
             ? 'Перевірте, чи доступне джерело для прямого XLSX export без входу в Google, а також чи правильний GID аркуша. Не відкривайте публічно таблиці з персональними або пацієнтськими даними.'
-            : status === 503
-              ? 'Приватний зв’язок із цільовою Google-таблицею не налаштований у Worker.'
-              : 'Перевірте доступ до вихідних Google-таблиць і налаштування приватного Sheets API для цільової книги.',
+            : 'Перевірте, чи джерела доступні для перегляду без входу в Google, чи правильно вказані ID/GID, а також чи немає в них даних, які не можна відкривати публічно.',
         }, status);
       }
     }
@@ -814,12 +585,6 @@ export default {
       const authenticated = await getAuthenticatedUser(request, env);
       if (authenticated.error) return authenticated.error;
       return json({ user: publicUser(authenticated.user), csrfToken: authenticated.user.csrfToken });
-    }
-
-    if (url.pathname === '/api/admin/google-sheets') {
-      const authenticated = await getAuthenticatedUser(request, env);
-      if (authenticated.error) return authenticated.error;
-      return handleGoogleSheetsAdmin(request, env, authenticated.user);
     }
 
     if (url.pathname === '/api/admin/users') {
