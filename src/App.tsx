@@ -1,23 +1,22 @@
 import type { FormEvent } from 'react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowDownToLine, ArrowUpFromLine, BadgeCheck, Building2, CalendarDays, ClipboardCheck, Dna, FileSpreadsheet, FlaskConical, LayoutDashboard, LogOut, Menu, Microscope, Plus, Search, ShieldCheck, Users, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AmrMap } from './components/AmrMap';
 import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import {
-  appendSheetRows, clearGoogleSession, createMissingSheetTabs, getGoogleProfile, getSpreadsheetTabs,
-  googleClientConfigured, getMissingGoogleConfiguration, GOOGLE_SHEET_TABS, readSheetTable, selectSpreadsheetWithPicker, signInWithGoogle,
-  type GoogleProfile, type GoogleSheetTab, type SheetRecord,
+  appendSheetRows, clearGoogleSession, createUser, getCurrentUser, GOOGLE_SHEET_TABS, loginWithPassword, readSheetTable,
+  type AppSessionUser, type GoogleSheetTab, type SheetRecord,
 } from './lib/google-sheets';
 
 type Tab = 'overview'|'facilities'|'visits'|'ipc'|'training'|'amr'|'wgs'|'recommendations'|'imports'|'legal'|'users';
 type Role = 'admin'|'operator'|'analyst';
-type AppUser = { id:string; email:string; fullName:string; role:Role; isActive:boolean; allFacilities:boolean; facilityCodes:string[] };
+type AppUser = { id:string; username:string; email:string; fullName:string; role:Role; isActive:boolean; allFacilities:boolean; facilityCodes:string[]; mustChangePassword:boolean };
 type SheetState = { headers:string[]; rows:SheetRecord[] };
 type AstRow = { Hospital_ID:string; Hospital_Name:string; Region_Oblast:string; Territorial_Hromada:string; Settlement:string; Patient_ID:string; Sample_ID:string; Sampling_Date:string; Sample_Matrix_Type:string; Bacterial_Species:string; Antimicrobial_Agent:string; MIC_Operator:string; MIC_Value:string; Zone_Diameter:string; SIR_Category:string; Interpretation_Standard:string };
 const AST_HEADERS = ['Hospital_ID','Hospital_Name','Region_Oblast','Territorial_Hromada','Settlement','Patient_ID','Sample_ID','Sampling_Date','Sample_Matrix_Type','Bacterial_Species','Antimicrobial_Agent','MIC_Operator','MIC_Value','Zone_Diameter','SIR_Category','Interpretation_Standard'];
-const USER_HEADERS = ['Google_Sub','Email','Full_Name','Role','Is_Active','All_Facilities','Facility_Codes','Created_At','Updated_At'];
+const USER_HEADERS = ['User_ID','Username','Email','Display_Name','Role','All_Facilities','Facility_Codes','Is_Active','Must_Change_Password','Created_At','Updated_At','Last_Login_At','Notes'];
 const DEFAULT_HEADERS:Record<GoogleSheetTab,string[]> = {
   Facilities:['EDRPOU','Name','Region_Oblast','District','Territorial_Hromada','Settlement','Address','Ownership','Care_Level','Network_Status','Monitoring_Years'],
   Facility_IPC_Profile:['Facility_ID','Facility_Name','Profile_Date','VIK_Unit','VIK_Staff_Count','VIK_FTE_Count','IPC_Program','Notes'],
@@ -76,10 +75,11 @@ export default function App(){
   const [tab,setTab]=useState<Tab>('overview');
   const [mobile,setMobile]=useState(false);
   const [user,setUser]=useState<AppUser|null>(null);
-  const [googleProfile,setGoogleProfile]=useState<GoogleProfile|null>(null);
+  const [loginName,setLoginName]=useState('');
+  const [loginPassword,setLoginPassword]=useState('');
   const [authLoading,setAuthLoading]=useState(false);
   const [authError,setAuthError]=useState('');
-  const [notice,setNotice]=useState('Увійдіть через Google, щоб підключити робочу книгу.');
+  const [notice,setNotice]=useState('Увійдіть за логіном і паролем, щоб підключитися до робочої книги.');
   const [sheets,setSheets]=useState<Partial<Record<GoogleSheetTab,SheetState>>>({});
   const [loading,setLoading]=useState(false);
   const [query,setQuery]=useState('');
@@ -101,54 +101,45 @@ export default function App(){
   const communities=useMemo(()=>COMMUNITY_SHAPES.map(shape=>{const matched=filteredAst.filter(row=>mapArea(row.Territorial_Hromada)===mapArea(shape.name));return{name:shape.name,total:matched.length,samples:new Set(matched.map(row=>row.Sample_ID)).size,resistant:matched.filter(row=>row.SIR_Category.toUpperCase()==='R').length};}),[filteredAst]);
   const districts=useMemo(()=>DISTRICT_SHAPES.map(shape=>{const names=COMMUNITY_SHAPES.filter(c=>c.district===shape.name).map(c=>mapArea(c.name));const matched=filteredAst.filter(row=>names.includes(mapArea(row.Territorial_Hromada)));return{name:shape.name,total:matched.length,samples:new Set(matched.map(row=>row.Sample_ID)).size,resistant:matched.filter(row=>row.SIR_Category.toUpperCase()==='R').length};}),[filteredAst]);
 
-  const ensureWorkbook=async()=>{
-    await createMissingSheetTabs([...GOOGLE_SHEET_TABS]);
+  const ensureWorkbook=async(sessionUser?:AppUser)=>{
     const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
-    const missing:string[]=[];
     for(const name of GOOGLE_SHEET_TABS){
-      let table=await readSheetTable(name);
-      if(!table.headers.length){
+      if(name==='Users'&&(sessionUser||user)?.role!=='admin')continue;
+      const table=await readSheetTable(name);
+      if(!table.headers.length&&name!=='Users'){
         const headers=DEFAULT_HEADERS[name];
         await appendSheetRows(name,headers,[headers]);
-        table={headers,rows:[]};
-        missing.push(name);
-      }
-      loaded[name]=table;
+        loaded[name]={headers,rows:[]};
+      }else loaded[name]=table;
     }
     setSheets(loaded);
-    return missing;
   };
+  useEffect(()=>{
+    let active=true;
+    void getCurrentUser().then(async current=>{
+      if(!active||!current)return;
+      const appUser:AppUser={id:current.id,username:current.username,email:current.email,fullName:current.fullName,role:current.role,isActive:true,allFacilities:current.allFacilities,facilityCodes:current.facilityCodes,mustChangePassword:current.mustChangePassword};
+      setUser(appUser);
+      await ensureWorkbook(appUser);
+      if(active)setNotice('Сесію відновлено. Підключення до головної Google-книги активне.');
+    }).catch(error=>{if(active)setAuthError(error instanceof Error?error.message:'Не вдалося відновити сеанс.');});
+    return()=>{active=false;};
+  },[]);
 
   const signIn=async()=>{
     setAuthLoading(true);setAuthError('');
     try{
-      await signInWithGoogle();
-      const profile=await getGoogleProfile();
-      const selectedWorkbook=await selectSpreadsheetWithPicker();
-      const existingTabs=await getSpreadsheetTabs();
-      if(!existingTabs.includes('Users'))await createMissingSheetTabs(['Users']);
-      let users=await readSheetTable('Users');
-      if(!users.headers.length){
-        await appendSheetRows('Users',USER_HEADERS,[USER_HEADERS]);
-        users={headers:USER_HEADERS,rows:[]};
-      }
-      if(!users.rows.length){
-        const bootstrap:SheetRecord={Google_Sub:profile.sub,Email:profile.email.toLowerCase(),Full_Name:profile.name||profile.email,Role:'admin',Is_Active:'TRUE',All_Facilities:'TRUE',Facility_Codes:'',Created_At:new Date().toISOString(),Updated_At:new Date().toISOString()};
-        await appendSheetRows('Users',users.headers,[users.headers.map(h=>getCell(bootstrap,[h]))]);
-        users=await readSheetTable('Users');
-      }
-      const record=users.rows.find(row=>getCell(row,['Email']).toLowerCase()===profile.email.toLowerCase()&&(!getCell(row,['Google_Sub'])||getCell(row,['Google_Sub'])===profile.sub));
-      if(!record)throw new Error('Google-акаунт '+profile.email+' не зареєстрований в аркуші Users. Додайте email та призначте роль.');
-      const appUser=parseUser(record);
-      if(!appUser.isActive)throw new Error('Обліковий запис деактивовано адміністратором.');
-      setGoogleProfile(profile);setUser(appUser);
-      await ensureWorkbook();
+      const current=await loginWithPassword(loginName,loginPassword);
+      const appUser:AppUser={id:current.id,username:current.username,email:current.email,fullName:current.fullName,role:current.role,isActive:true,allFacilities:current.allFacilities,facilityCodes:current.facilityCodes,mustChangePassword:current.mustChangePassword};
+      setUser(appUser);
+      await ensureWorkbook(appUser);
+      setLoginPassword('');
       setAuthError('');
-      setNotice('Підключено Google Sheets · '+selectedWorkbook.name+' · '+profile.email+'. Вибрано саме цю книгу через Google Picker.');
+      setNotice('Вхід виконано · '+appUser.username+' · '+(appUser.allFacilities?'доступ до всіх закладів':'доступ до визначених закладів')+'.');
       setTab('overview');
     }catch(error){
-      clearGoogleSession();setUser(null);setGoogleProfile(null);
-      setAuthError(error instanceof Error?error.message:'Не вдалося підключити Google Sheets.');
+      clearGoogleSession();setUser(null);
+      setAuthError(error instanceof Error?error.message:'Не вдалося увійти в систему.');
     }finally{setAuthLoading(false);}
   };
 
@@ -157,6 +148,7 @@ export default function App(){
     try{
       const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
       for(const name of GOOGLE_SHEET_TABS){
+        if(name==='Users'&&user.role!=='admin')continue;
         const table=await readSheetTable(name);
         loaded[name]=table;
       }
@@ -167,8 +159,8 @@ export default function App(){
   };
 
   const signOut=()=>{
-    clearGoogleSession();setUser(null);setGoogleProfile(null);setSheets({});setTab('overview');
-    setNotice('Сеанс Google завершено.');
+    clearGoogleSession();setUser(null);setSheets({});setTab('overview');
+    setNotice('Сеанс завершено.');
   };
 
   const saveRecord=async(sheet:GoogleSheetTab,record:SheetRecord)=>{
@@ -252,12 +244,14 @@ export default function App(){
     if(!user||user.role!=='admin')return;
     const table=sheets.Users;
     if(!table?.headers.length)throw new Error('Аркуш Users не має заголовків.');
-    const email=String(draft.Email||'').trim().toLowerCase();
-    if(!email)throw new Error('Email обов’язковий.');
-    if(table.rows.some(row=>getCell(row,['Email']).toLowerCase()===email))throw new Error('Користувач з таким email уже є.');
-    const row:SheetRecord={Google_Sub:'',Email:email,Full_Name:String(draft.Full_Name||''),Role:String(draft.Role||'analyst'),Is_Active:String(draft.Is_Active||'TRUE'),All_Facilities:String(draft.All_Facilities||'FALSE'),Facility_Codes:String(draft.Facility_Codes||''),Created_At:new Date().toISOString(),Updated_At:new Date().toISOString()};
-    await saveRecord('Users',row);
-    setDraft({});setShowForm(false);setNotice('Додано профіль '+email+'. Надалі потрібно надати цьому акаунту доступ до Google-книги у Drive.');
+    const username=String(draft.Username||'').trim().toLowerCase();
+    const password=String(draft.Password||'');
+    if(!username)throw new Error('Логін обов’язковий.');
+    if(!password)throw new Error('Початковий пароль обов’язковий.');
+    await createUser({username,password,email:String(draft.Email||'').trim().toLowerCase(),displayName:String(draft.Display_Name||''),role:String(draft.Role||'analyst') as Role,allFacilities:draft.All_Facilities==='TRUE',facilityCodes:String(draft.Facility_Codes||'').split(/[;,\\n]/).map(x=>x.trim()).filter(Boolean),isActive:(draft.Is_Active||'TRUE')==='TRUE'});
+    const refreshed=await readSheetTable('Users');
+    setSheets(previous=>({...previous,Users:refreshed}));
+    setDraft({});setShowForm(false);setNotice('Створено обліковий запис '+username+'. Пароль збережено лише у вигляді криптографічного хешу.');
   };
 
   const downloadAstTemplate=()=>{
@@ -268,10 +262,13 @@ export default function App(){
 
   if(!user){
     return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>IPC & AMR Monitoring</h1>
-      {authLoading?<p>Підключення Google Sheets…</p>:<><p>{authError||'Увійдіть через Google, щоб працювати з єдиною книгою IPC та AMR.'}</p>
-      <button className="primary" disabled={!googleClientConfigured()} onClick={()=>void signIn()}>{googleClientConfigured()?'Увійти через Google':'Налаштування Google Cloud не завершене'}</button>
-      {!googleClientConfigured()&&<small>У GitHub Actions → Variables потрібно додати такі публічні параметри: <b>{getMissingGoogleConfiguration().join(', ')}</b>. Це не секрети й не паролі. Докладна інструкція: <a href="https://github.com/TarasB88/infection_control_AMR_TOCKPH/blob/main/docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md" target="_blank" rel="noreferrer">налаштування Google Sheets</a>.</small>}
-      <small>Google-акаунт повинен мати доступ до робочої книги в Google Drive. Після входу роль перевіряється за аркушем Users.</small></>}
+      <p>{authError||'Увійдіть за персональним логіном і паролем. Доступ до даних перевіряється сервером.'}</p>
+      {authLoading?<p>Перевірка облікових даних…</p>:<form className="authform" onSubmit={event=>{event.preventDefault();void signIn();}}>
+        <label>Логін<input autoComplete="username" value={loginName} onChange={event=>setLoginName(event.target.value)} required/></label>
+        <label>Пароль<input type="password" autoComplete="current-password" value={loginPassword} onChange={event=>setLoginPassword(event.target.value)} required/></label>
+        <button className="primary" type="submit">Увійти</button>
+      </form>}
+      <small>Обліковий запис створює адміністратор системи. Google-акаунт працівника не потрібен.</small>
     </div></div>;
   }
 
@@ -299,19 +296,19 @@ export default function App(){
       <div className="brand"><div className="brandmark"><ShieldCheck/></div><div><b>ТЕРНОПІЛЬСЬКИЙ ОЦКПХ</b><small>IPC & AMR MONITORING</small></div><button className="close" onClick={()=>setMobile(false)}><X/></button></div>
       <div className="sideintro">ІНФОРМАЦІЙНО-АНАЛІТИЧНА СИСТЕМА</div>
       {['РОБОЧА ПАНЕЛЬ','ІНФЕКЦІЙНИЙ КОНТРОЛЬ','ЛАБОРАТОРНИЙ НАГЛЯД','ІНСТРУМЕНТИ','НОРМАТИВНО-ПРАВОВА БАЗА','АДМІНІСТРУВАННЯ'].map(group=><div className="navgroup" key={group}><label>{group}</label>{nav.filter(item=>item.group===group&&(item.id!=='users'||user.role==='admin')).map(item=><button key={item.id} className={'nav '+(tab===item.id?'active':'')} onClick={()=>{setTab(item.id);setMobile(false);setShowForm(false);setQuery('');}}><item.icon size={17}/>{item.label}</button>)}</div>)}
-      <div className="sidebottom"><ShieldCheck size={16}/> Google Sheets · пряме підключення<small>{user.email}</small></div>
+      <div className="sidebottom"><ShieldCheck size={16}/> Захищена серверна авторизація<small>{user.username} · {user.email}</small></div>
     </aside>
     <main>
-      <header className="topbar"><button className="hamb" onClick={()=>setMobile(true)}><Menu/></button><div>IPC & AMR <span>/</span> {title}</div><div className="topright"><em>GOOGLE SHEETS</em><b>{(googleProfile?.name||user.fullName||'G').slice(0,1)}</b><button className="btn" onClick={signOut}><LogOut size={15}/> Вийти</button></div></header>
+      <header className="topbar"><button className="hamb" onClick={()=>setMobile(true)}><Menu/></button><div>IPC & AMR <span>/</span> {title}</div><div className="topright"><em>SERVER AUTH</em><b>{(user.fullName||'G').slice(0,1)}</b><button className="btn" onClick={signOut}><LogOut size={15}/> Вийти</button></div></header>
       <div className="page">
         <div className="pagehead"><div><label>ТЕРНОПІЛЬСЬКИЙ ОБЛАСНИЙ ЦЕНТР КОНТРОЛЮ ТА ПРОФІЛАКТИКИ ХВОРОБ МОЗ УКРАЇНИ</label><h1>{tab==='overview'?'Моніторинг інфекційного контролю та AMR':title}</h1><p>{tab==='overview'?'Єдиний робочий простір. Усі робочі аркуші підключені безпосередньо до Google Sheets.':'Джерело даних: головна Google-книга IPC & AMR.'}</p></div><button className="btn" onClick={()=>void refreshAll()} disabled={loading}><ArrowDownToLine size={16}/>{loading?'Оновлення…':'Оновити всі дані'}</button></div>
         <div className="notice"><AlertCircle size={17}/>{notice}</div>
-        {tab==='overview'&&<><div className="section"><div><h2>Робочий огляд</h2><p>Кількість записів безпосередньо в Google Sheets</p></div><span className="pill">LIVE GOOGLE SHEETS</span></div><div className="metrics">{GOOGLE_SHEET_TABS.map(name=><div className="metric" key={name}><small>{name}</small><b>{sheets[name]?.rows.length??0}</b><span>рядків даних</span></div>)}</div><div className="modules">{nav.filter(item=>item.id!=='overview'&&item.id!=='users'&&item.id!=='imports').map(item=><button className="module" key={item.id} onClick={()=>setTab(item.id)}><div className="modicon"><item.icon/></div><div><small>GOOGLE SHEETS</small><h3>{item.label}</h3><p>Читання та запис до відповідного аркуша</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Сховище та контроль доступу</h3><p>Cloudflare D1 вимкнений. Паролі в системі не створюються. Вхід виконується через Google OAuth, а дані читаються й записуються через Google Sheets API без проміжної бази.</p><p><b>Обмеження доступу:</b> Google надає права на всю книгу. Роль у аркуші Users обмежує елементи інтерфейсу, але не створює окремих серверних прав на рядки чи вкладки. Користувач із доступом до книги технічно може переглянути її вкладки через Google Drive/API. Не використовуйте цю конструкцію як межу ізоляції для персональних або клінічно чутливих даних.</p></section></>}
+        {tab==='overview'&&<><div className="section"><div><h2>Робочий огляд</h2><p>Кількість записів безпосередньо в Google Sheets</p></div><span className="pill">LIVE GOOGLE SHEETS</span></div><div className="metrics">{GOOGLE_SHEET_TABS.map(name=><div className="metric" key={name}><small>{name}</small><b>{sheets[name]?.rows.length??0}</b><span>рядків даних</span></div>)}</div><div className="modules">{nav.filter(item=>item.id!=='overview'&&item.id!=='users'&&item.id!=='imports').map(item=><button className="module" key={item.id} onClick={()=>setTab(item.id)}><div className="modicon"><item.icon/></div><div><small>GOOGLE SHEETS</small><h3>{item.label}</h3><p>Читання та запис до відповідного аркуша</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Сховище та контроль доступу</h3><p>Cloudflare D1 не використовується. Google Sheets залишається єдиним сховищем. Worker перевіряє пароль за PBKDF2-хешем, видає захищену HttpOnly-сесію та контролює права на сервері.</p><p><b>Розмежування доступу:</b> адміністратор бачить усі заклади або задає коди доступу для кожного працівника. Сервер фільтрує дані за дозволеними кодами та перевіряє права під час запису.</p></section></>}
         {tab==='facilities'&&<><div className="section"><div><h2>Реєстр закладів охорони здоров’я</h2><p>Аркуш Facilities головної Google-книги</p></div><span className="pill">{facilities.length} закладів</span></div><div className="filter"><div><Search size={17}/><input value={facilityQuery} onChange={e=>setFacilityQuery(e.target.value)} placeholder="Пошук за назвою, ЄДРПОУ, районом або громадою"/></div><button className="btn" onClick={()=>void refreshAll()} disabled={loading}>Оновити</button></div><div className="metrics">{[['Заклади',facilities.length],['Громади',new Set(facilities.map(f=>f.hromada).filter(Boolean)).size],['Рівень допомоги',facilities.filter(f=>f.care_level).length],['Мережа',facilities.filter(f=>f.network_status).length]].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>з Google Sheets</span></div>)}</div><section className="panel tablepanel"><div className="paneltitle"><div><h3>Заклади Тернопільської області</h3><p>Редагуйте довідник безпосередньо у Google Sheets</p></div><span>{selectedFacilities.length} записів</span></div><div className="tablewrap"><table><thead><tr>{['ЄДРПОУ','Назва закладу','Район','Громада','Населений пункт','Власність','Рівень допомоги','Спроможна мережа'].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{selectedFacilities.map((f,i)=><tr key={f.edrpou||i}><td>{f.edrpou}</td><td><b>{f.name}</b></td><td>{f.district}</td><td>{f.hromada}</td><td>{f.settlement}</td><td>{f.ownership}</td><td>{f.care_level}</td><td>{f.network_status}</td></tr>)}</tbody></table>{!selectedFacilities.length&&<div className="empty">Аркуш Facilities не містить рядків або запит не повернув даних.</div>}</div></section></>}
         {(tab==='amr'||tab==='wgs')&&<><div className="section"><div><h2>{tab==='amr'?'Моніторинг антимікробної резистентності AST':'Геномний нагляд WGS'}</h2><p>Пряме читання та запис у {activeSheet}</p></div>{canWrite&&<button className="primary" onClick={()=>fileRef.current?.click()}><ArrowUpFromLine size={16}/> Завантажити Excel</button>}</div><div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук у поточному аркуші"/></div><button className="btn" onClick={exportAst}><ArrowDownToLine size={16}/> Експорт AST</button><button className="btn" onClick={downloadAstTemplate}>Шаблон AST</button>{canWrite&&<button className="btn" onClick={()=>addForm(activeSheet!)}><Plus size={16}/> Додати запис</button>}</div>{tab==='amr'&&<><div className="metrics">{[['Результати AST',astRows.length],['Мікроорганізми',new Set(astRows.map(r=>r.Bacterial_Species)).size],['Категорія R',astRows.filter(r=>r.SIR_Category.toUpperCase()==='R').length],['WGS',sheets.WGS_Staging?.rows.length??0]].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>з Google Sheets</span></div>)}</div><section className="panel amr-map-panel"><div className="paneltitle"><div><h3>Територіальний розподіл результатів AMR</h3><p>Дані згруповані за територіальними громадами</p></div></div><AmrMap districtStats={districts} selectedDistrict={selectedDistrict} onSelectDistrict={name=>{setSelectedDistrict(name);setSelectedCommunity('all');}} communityStats={communities} selectedCommunity={selectedCommunity} onSelectCommunity={name=>{setSelectedCommunity(name);setSelectedDistrict('all');}}/><div className="amr-map-selection">{selectedCommunity!=='all'?'Обрана громада: '+selectedCommunity:selectedDistrict!=='all'?'Обраний район: '+selectedDistrict:'Територію не обрано'}</div></section></>}{showForm&&<form className="panel manual-panel" onSubmit={addGenericRecord}><div className="paneltitle"><div><h3>Новий запис у {activeSheet}</h3><p>Поля відповідають заголовкам активного аркуша</p></div></div><div className="manual-fields">{activeHeaders.map(header=><label key={header}>{header}<input value={draft[header]||''} onChange={e=>setDraft(current=>({...current,[header]:e.target.value}))}/></label>)}</div><button className="primary" type="submit" disabled={saving}>{saving?'Запис…':'Зберегти в Google Sheets'}</button></form>}<section className="panel tablepanel"><div className="paneltitle"><div><h3>Записи {activeSheet}</h3><p>Поточні дані з робочої книги</p></div><span>{visibleRows.length} рядків</span></div><div className="tablewrap"><table><thead><tr>{activeHeaders.map(header=><th key={header}>{header}</th>)}</tr></thead><tbody>{visibleRows.map((row,i)=><tr key={i}>{activeHeaders.map(header=><td key={header}>{row[header]||'—'}</td>)}</tr>)}</tbody></table>{!visibleRows.length&&<div className="empty">Дані не знайдені.</div>}</div></section></>}
         {['visits','ipc','training','recommendations','legal'].includes(tab)&&activeSheet&&<><div className="section"><div><h2>{title}</h2><p>Робочий аркуш {activeSheet} у головній Google-книзі</p></div><span className="pill">{activeRecords.length} записів</span></div><div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук записів"/></div>{canWrite&&<button className="primary" onClick={()=>addForm(activeSheet)}><Plus size={16}/> Додати запис</button>}</div>{showForm&&<form className="panel manual-panel" onSubmit={addGenericRecord}><div className="paneltitle"><div><h3>Новий запис · {activeSheet}</h3><p>Значення буде додано безпосередньо в Google Sheets</p></div></div><div className="manual-fields">{activeHeaders.map(header=><label key={header}>{header}<input value={draft[header]||''} onChange={e=>setDraft(current=>({...current,[header]:e.target.value}))}/></label>)}</div><button className="primary" disabled={saving} type="submit">Зберегти запис</button></form>}<section className="panel tablepanel"><div className="tablewrap"><table><thead><tr>{activeHeaders.map(header=><th key={header}>{header}</th>)}</tr></thead><tbody>{visibleRows.map((row,i)=><tr key={i}>{activeHeaders.map(header=><td key={header}>{row[header]||'—'}</td>)}</tr>)}</tbody></table>{!visibleRows.length&&<div className="empty">У цьому аркуші поки немає записів.</div>}</div></section></>}
         {tab==='imports'&&<><div className="section"><div><h2>Імпорт та контроль якості даних</h2><p>Завантаження даних безпосередньо до Google Sheets</p></div></div><div className="modules">{(['AST_Data','WGS_Staging','IPC_Assessments','Training_Events','Legal_Acts'] as GoogleSheetTab[]).map(name=><button className="module" key={name} onClick={()=>{setTab(name==='AST_Data'?'amr':name==='WGS_Staging'?'wgs':name==='IPC_Assessments'?'ipc':name==='Training_Events'?'training':'legal');setShowForm(false);}}><div className="modicon"><FileSpreadsheet/></div><div><small>GOOGLE SHEETS</small><h3>{name}</h3><p>{sheets[name]?.rows.length??0} записів</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Правила роботи з чутливими даними</h3><p>Не завантажуйте ПІБ, номери медичних карт або інші прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте попередньо погоджений псевдонім. Google Sheets API записує дані безпосередньо в книгу; окремої серверної псевдонімізації більше немає.</p></section></>}
-        {tab==='users'&&user.role==='admin'&&<><div className="section"><div><h2>Користувачі та доступ</h2><p>Профілі Google-акаунтів зберігаються на аркуші Users</p></div><span className="pill">{sheets.Users?.rows.length??0} профілів</span></div><section className="panel user-admin"><h3>Додати користувача</h3><form onSubmit={addUser}><div className="user-fields"><label>Email Google<input type="email" required value={draft.Email||''} onChange={e=>setDraft(d=>({...d,Email:e.target.value}))}/></label><label>ПІБ<input value={draft.Full_Name||''} onChange={e=>setDraft(d=>({...d,Full_Name:e.target.value}))}/></label><label>Роль<select value={draft.Role||'analyst'} onChange={e=>setDraft(d=>({...d,Role:e.target.value}))}><option value="operator">Оператор</option><option value="analyst">Аналітик</option><option value="admin">Адміністратор</option></select></label><label>Доступні коди закладів<input value={draft.Facility_Codes||''} onChange={e=>setDraft(d=>({...d,Facility_Codes:e.target.value}))} placeholder="Через кому або крапку з комою"/></label></div><div className="user-options"><label><input type="checkbox" checked={(draft.Is_Active||'TRUE')==='TRUE'} onChange={e=>setDraft(d=>({...d,Is_Active:e.target.checked?'TRUE':'FALSE'}))}/> Активний</label><label><input type="checkbox" checked={draft.All_Facilities==='TRUE'} onChange={e=>setDraft(d=>({...d,All_Facilities:e.target.checked?'TRUE':'FALSE'}))}/> Усі заклади</label></div><button className="primary" type="submit" disabled={saving}>Додати профіль</button></form></section><section className="panel tablepanel"><div className="tablewrap"><table><thead><tr>{USER_HEADERS.map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{(sheets.Users?.rows||[]).map((row,i)=><tr key={i}>{USER_HEADERS.map(h=><td key={h}>{row[h]||'—'}</td>)}</tr>)}</tbody></table></div></section><section className="panel rules"><p>Для входу кожен працівник використовує свій Google-акаунт. Адміністратор додає його email до Users, а власник книги окремо надає цьому акаунту доступ у Google Drive. Роль у Users визначає інтерфейс застосунку, але не обмежує прямий доступ до всієї книги в Google Sheets.</p></section></>}
+        {tab==='users'&&user.role==='admin'&&<><div className="section"><div><h2>Користувачі та доступ</h2><p>Облікові записи та права доступу зберігаються на аркуші Users</p></div><span className="pill">{sheets.Users?.rows.length??0} профілів</span></div><section className="panel user-admin"><h3>Додати користувача</h3><form onSubmit={addUser}><div className="user-fields"><label>Логін<input required minLength={3} maxLength={40} value={draft.Username||''} onChange={e=>setDraft(d=>({...d,Username:e.target.value}))}/></label><label>Початковий пароль<input type="password" required minLength={12} value={draft.Password||''} onChange={e=>setDraft(d=>({...d,Password:e.target.value}))}/></label><label>Email<input type="email" value={draft.Email||''} onChange={e=>setDraft(d=>({...d,Email:e.target.value}))}/></label><label>ПІБ<input value={draft.Display_Name||''} onChange={e=>setDraft(d=>({...d,Display_Name:e.target.value}))}/></label><label>Роль<select value={draft.Role||'analyst'} onChange={e=>setDraft(d=>({...d,Role:e.target.value}))}><option value="operator">Оператор</option><option value="analyst">Аналітик</option><option value="admin">Адміністратор</option></select></label><label>Доступні коди закладів<input value={draft.Facility_Codes||''} onChange={e=>setDraft(d=>({...d,Facility_Codes:e.target.value}))} placeholder="Через кому або крапку з комою"/></label></div><div className="user-options"><label><input type="checkbox" checked={(draft.Is_Active||'TRUE')==='TRUE'} onChange={e=>setDraft(d=>({...d,Is_Active:e.target.checked?'TRUE':'FALSE'}))}/> Активний</label><label><input type="checkbox" checked={draft.All_Facilities==='TRUE'} onChange={e=>setDraft(d=>({...d,All_Facilities:e.target.checked?'TRUE':'FALSE'}))}/> Усі заклади</label></div><button className="primary" type="submit" disabled={saving}>Додати профіль</button></form></section><section className="panel tablepanel"><div className="tablewrap"><table><thead><tr>{USER_HEADERS.map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{(sheets.Users?.rows||[]).map((row,i)=><tr key={i}>{USER_HEADERS.map(h=><td key={h}>{row[h]||'—'}</td>)}</tr>)}</tbody></table></div></section><section className="panel rules"><p>Працівники входять за логіном і паролем. Пароль у відкритому вигляді не зберігається: Worker формує PBKDF2-хеш із випадковою сіллю. Для доступу до всіх закладів встановіть прапорець «Усі заклади», інакше перелічіть коди через кому або крапку з комою. Колонки Password та Password_Hash ніколи не повертаються у браузер.</p></section></>}
         <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={event=>void importAst(event.target.files?.[0])}/>
         <footer>ДУ «Тернопільський обласний центр контролю та профілактики хвороб МОЗ України»<span>IPC & AMR Monitoring · Google Sheets</span></footer>
       </div>
