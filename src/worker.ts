@@ -175,7 +175,7 @@ const readPublicFacilityCsv = async (source: typeof FACILITY_CSV_SOURCES[number]
   const csv = await response.text();
   if (!csv || /^\s*</.test(csv)) throw new Error('facility_csv_' + source.key + '_not_public');
   const matrix = parseCsvRows(csv);
-  if (matrix.length < 2) throw new Error('facility_csv_' + source.key + '_empty');
+  if (matrix.length < 1) throw new Error('facility_csv_' + source.key + '_empty');
   const headers = matrix[0].map(value => value.trim());
   if (headers.some(header => !header)) throw new Error('facility_csv_' + source.key + '_blank_header');
   const normalizedHeaders = headers.map(normalizeFacilityHeader);
