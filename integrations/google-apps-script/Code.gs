@@ -299,7 +299,7 @@ function mergeUniqueFacilityText_(left, right, field) {
 function previewFacilitiesSync_(targetBook, commit) {
   if (!commit) return buildFacilitiesSyncReport_(targetBook, false);
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) throw new Error('write_busy_retry');
+  lock.waitLock(30000);
   try { return buildFacilitiesSyncReport_(targetBook, true); }
   finally { lock.releaseLock(); }
 }
@@ -586,14 +586,20 @@ function runFacilitiesSync_(source) {
 function queueFacilitiesAutoSync_() {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty('FACILITIES_AUTO_SYNC_ENABLED') !== 'true') return;
-  // Debounce rapid consecutive edits and structural changes into one sync.
-  const hasPending = ScriptApp.getProjectTriggers().some(trigger =>
-    trigger.getHandlerFunction() === 'debouncedFacilitiesSync_' &&
-    trigger.getEventType() === ScriptApp.EventType.CLOCK
-  );
-  props.setProperty('FACILITIES_AUTO_SYNC_PENDING', 'true');
-  if (!hasPending) {
-    ScriptApp.newTrigger('debouncedFacilitiesSync_').timeBased().after(60 * 1000).create();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    // Debounce rapid consecutive edits and structural changes into one sync.
+    const hasPending = ScriptApp.getProjectTriggers().some(trigger =>
+      trigger.getHandlerFunction() === 'debouncedFacilitiesSync_' &&
+      trigger.getEventType() === ScriptApp.EventType.CLOCK
+    );
+    props.setProperty('FACILITIES_AUTO_SYNC_PENDING', 'true');
+    if (!hasPending) {
+      ScriptApp.newTrigger('debouncedFacilitiesSync_').timeBased().after(60 * 1000).create();
+    }
+  } finally {
+    lock.releaseLock();
   }
 }
 
