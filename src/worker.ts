@@ -43,7 +43,7 @@ let usersPending:Promise<UserTable>|null=null;
 async function readUsers(e:Env):Promise<UserTable>{
  if(usersCache&&usersCache.expires>Date.now())return usersCache.table;
  if(usersPending)return usersPending;
- const pending=readUsers(e);
+ const pending=readTable(e,'Users');
  usersPending=pending;
  try{
   const table=await pending;
