@@ -45,6 +45,19 @@ function doPost(e) {
     const ss = SpreadsheetApp.openById(ssId);
     const action = String(body.action || '');
 
+
+    if (action === 'getFacilitiesSyncStatus') {
+      return output_({ ok: true, autoSync: getFacilitiesAutoSyncStatus_() });
+    }
+
+    if (action === 'enableFacilitiesAutoSync') {
+      return output_({ ok: true, autoSync: installFacilitiesAutoSync_() });
+    }
+
+    if (action === 'disableFacilitiesAutoSync') {
+      return output_({ ok: true, autoSync: removeFacilitiesAutoSync_() });
+    }
+
     if (action === 'listSheets') {
       return output_({
         ok: true,
@@ -89,7 +102,8 @@ function doPost(e) {
 
     if (action === 'syncFacilities') {
       if (body.confirm !== true) return output_({ ok: false, error: 'confirmation_required' });
-      return output_(previewFacilitiesSync_(ss, true));
+      const result = runFacilitiesSync_('manual');
+      return output_(result);
     }
 
     const sheetName = String(body.sheet || '');
@@ -433,6 +447,125 @@ function buildFacilitiesSyncReport_(targetBook, commit) {
   report.updated = updated;
   report.unchanged = unchanged;
   return report;
+}
+
+
+/**
+ * Trigger installation is explicit and idempotent. It listens for direct edits
+ * in both source workbooks and runs an hourly reconciliation as a safety net
+ * for changes made by APIs/imports that do not fire onEdit triggers.
+ */
+function installFacilitiesAutoSync_() {
+  const props = PropertiesService.getScriptProperties();
+  const triggers = ScriptApp.getProjectTriggers();
+  const handler = 'sourceSpreadsheetEditHandler_';
+  const created = [];
+  CONFIG.facilitySources.forEach(source => {
+    const exists = triggers.some(trigger =>
+      trigger.getHandlerFunction() === handler &&
+      trigger.getTriggerSourceId() === source.spreadsheetId &&
+      trigger.getEventType() === ScriptApp.EventType.ON_EDIT
+    );
+    if (!exists) {
+      ScriptApp.newTrigger(handler).forSpreadsheet(source.spreadsheetId).onEdit().create();
+      created.push('onEdit:' + source.key);
+    }
+  });
+  const hasHourly = ScriptApp.getProjectTriggers().some(trigger =>
+    trigger.getHandlerFunction() === 'scheduledFacilitiesSync_' &&
+    trigger.getEventType() === ScriptApp.EventType.CLOCK
+  );
+  if (!hasHourly) {
+    ScriptApp.newTrigger('scheduledFacilitiesSync_').timeBased().everyHours(1).create();
+    created.push('hourly');
+  }
+  props.setProperty('FACILITIES_AUTO_SYNC_ENABLED', 'true');
+  props.setProperty('FACILITIES_AUTO_SYNC_CONFIGURED_AT', new Date().toISOString());
+  props.setProperty('FACILITIES_AUTO_SYNC_LAST_ERROR', '');
+  return Object.assign(getFacilitiesAutoSyncStatus_(), { created: created });
+}
+
+function removeFacilitiesAutoSync_() {
+  const handlers = ['sourceSpreadsheetEditHandler_', 'scheduledFacilitiesSync_'];
+  let deleted = 0;
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (handlers.indexOf(trigger.getHandlerFunction()) >= 0) {
+      ScriptApp.deleteTrigger(trigger);
+      deleted++;
+    }
+  });
+  PropertiesService.getScriptProperties().setProperty('FACILITIES_AUTO_SYNC_ENABLED', 'false');
+  return Object.assign(getFacilitiesAutoSyncStatus_(), { deleted: deleted });
+}
+
+function getFacilitiesAutoSyncStatus_() {
+  const props = PropertiesService.getScriptProperties();
+  const triggers = ScriptApp.getProjectTriggers();
+  const enabled = props.getProperty('FACILITIES_AUTO_SYNC_ENABLED') === 'true';
+  const editTriggers = triggers.filter(trigger =>
+    trigger.getHandlerFunction() === 'sourceSpreadsheetEditHandler_' &&
+    trigger.getEventType() === ScriptApp.EventType.ON_EDIT
+  ).map(trigger => trigger.getTriggerSourceId());
+  const hourly = triggers.some(trigger =>
+    trigger.getHandlerFunction() === 'scheduledFacilitiesSync_' &&
+    trigger.getEventType() === ScriptApp.EventType.CLOCK
+  );
+  let lastSummary = null;
+  try { lastSummary = JSON.parse(props.getProperty('FACILITIES_AUTO_SYNC_LAST_SUMMARY') || 'null'); } catch (_) {}
+  return {
+    enabled: enabled && (editTriggers.length > 0 || hourly),
+    sourceEditTriggers: editTriggers.length,
+    hourlyFallback: hourly,
+    configuredAt: props.getProperty('FACILITIES_AUTO_SYNC_CONFIGURED_AT') || '',
+    lastAttemptAt: props.getProperty('FACILITIES_AUTO_SYNC_LAST_ATTEMPT_AT') || '',
+    lastSuccessAt: props.getProperty('FACILITIES_AUTO_SYNC_LAST_SUCCESS_AT') || '',
+    lastSource: props.getProperty('FACILITIES_AUTO_SYNC_LAST_SOURCE') || '',
+    lastError: props.getProperty('FACILITIES_AUTO_SYNC_LAST_ERROR') || '',
+    lastSummary: lastSummary
+  };
+}
+
+function runFacilitiesSync_(source) {
+  const props = PropertiesService.getScriptProperties();
+  const startedAt = new Date().toISOString();
+  props.setProperty('FACILITIES_AUTO_SYNC_LAST_ATTEMPT_AT', startedAt);
+  props.setProperty('FACILITIES_AUTO_SYNC_LAST_SOURCE', String(source || 'unknown'));
+  try {
+    const targetId = props.getProperty('SPREADSHEET_ID') || CONFIG.spreadsheetId;
+    const targetBook = SpreadsheetApp.openById(targetId);
+    const result = previewFacilitiesSync_(targetBook, true);
+    const summary = result.summary || {};
+    const compact = {
+      inserted: Number(result.inserted || 0),
+      updated: Number(result.updated || 0),
+      unchanged: Number(result.unchanged || 0),
+      sourceFacilities: Number(summary.sourceFacilities || 0),
+      duplicateRegistryIds: Number(summary.duplicateRegistryIds || 0),
+      duplicateTargetIds: Number(summary.duplicateTargetIds || 0),
+      incompleteRows: Number(summary.incompleteRows || 0)
+    };
+    props.setProperty('FACILITIES_AUTO_SYNC_LAST_SUCCESS_AT', new Date().toISOString());
+    props.setProperty('FACILITIES_AUTO_SYNC_LAST_SUMMARY', JSON.stringify(compact));
+    props.setProperty('FACILITIES_AUTO_SYNC_LAST_ERROR', '');
+    result.autoSync = getFacilitiesAutoSyncStatus_();
+    return result;
+  } catch (error) {
+    const message = String(error && error.message || error).slice(0, 500);
+    props.setProperty('FACILITIES_AUTO_SYNC_LAST_ERROR', message);
+    throw error;
+  }
+}
+
+function sourceSpreadsheetEditHandler_(event) {
+  const enabled = PropertiesService.getScriptProperties().getProperty('FACILITIES_AUTO_SYNC_ENABLED') === 'true';
+  if (!enabled) return;
+  runFacilitiesSync_('source_edit');
+}
+
+function scheduledFacilitiesSync_() {
+  const enabled = PropertiesService.getScriptProperties().getProperty('FACILITIES_AUTO_SYNC_ENABLED') === 'true';
+  if (!enabled) return;
+  runFacilitiesSync_('hourly');
 }
 
 function output_(data, status) {
