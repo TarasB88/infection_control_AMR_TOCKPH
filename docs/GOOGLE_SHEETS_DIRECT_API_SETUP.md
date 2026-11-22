@@ -1,90 +1,106 @@
-# Google Sheets only: налаштування
+# Серверна авторизація та Google Sheets
 
-## Архітектура
+## Цільова архітектура
 
-Браузерний застосунок напряму читає та записує Google Sheets. Серверний застосунок не має бази даних, не зберігає сесії, не виконує Google OAuth від імені користувача і не отримує Google private key.
+- Єдина база робочих даних: одна приватна Google Sheets книга.
+- Cloudflare Worker — серверний API, авторизація, сесії та контроль доступу.
+- Працівники не входять через Google і не отримують доступу до книги в Google Drive.
+- Worker використовує Google service account для читання/запису книги.
+- Cloudflare D1 не використовується.
+- Паролі зберігаються тільки як PBKDF2-HMAC-SHA256 хеші з випадковою сіллю.
 
-- Cloudflare Worker: лише статичний frontend.
-- Дані: одна приватна Google-книга.
-- Вхід: персональний Google OAuth.
-- API: Google Sheets API напряму з браузера.
-- Немає D1, SQL, service account, client secret, private key, Apps Script.
+## 1. Google service account
 
-Робочу книгу користувач вибирає після входу через Google Picker. Її ID зберігається лише в пам’яті вкладки браузера на час поточного сеансу.
+1. У Google Cloud Console створіть або виберіть проєкт.
+2. Увімкніть **Google Sheets API**.
+3. Створіть **IAM & Admin → Service Accounts → Create service account**.
+4. Створіть JSON key для service account і збережіть локально в захищеному місці. Не додавайте файл у репозиторій.
+5. Відкрийте головну Google-книгу та надайте адресу service account роль **Editor**.
+6. Скопіюйте адресу service account і поле `private_key` із JSON key. Приватний ключ нікому не надсилайте.
 
-## 1. Google Cloud project
+## 2. Cloudflare Worker secrets
 
-1. Відкрийте Google Cloud Console та створіть або виберіть проєкт.
-2. Увімкніть **Google Sheets API**, **Google Drive API** та **Google Picker API**.
-3. Налаштуйте OAuth consent screen (назва застосунку, контакт, тип користувачів/аудиторія).
-4. Створіть credential типу **OAuth Client ID → Web application**.
-5. У **Authorized JavaScript origins** додайте:
-   - `https://infection-control-amr-tockph.burdataras.workers.dev`
-   - локальний origin для розробки, наприклад `http://localhost:5173`.
-   Не додавайте шлях, query string або `https://docs.google.com` до OAuth origins.
-6. Для **Google API key** у Website restrictions окремо додайте:
-   - `https://infection-control-amr-tockph.burdataras.workers.dev/*`
-   - `https://docs.google.com/*` (Google Picker відкривається в iframe на цьому домені).
-7. Скопіюйте OAuth Client ID. Client ID є публічним параметром; не створюйте й не використовуйте client secret для цього SPA token flow.
+У корені локальної копії репозиторію виконайте команди. Wrangler запитуватиме значення в інтерактивному режимі:
 
-Для організаційного Google Workspace OAuth consent screen може вимагати внутрішній тип аудиторії та адміністративне схвалення.
+```bash
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
+npx wrangler secret put GOOGLE_SPREADSHEET_ID
+npx wrangler secret put SESSION_SECRET
+```
 
-## 2. GitHub Actions variable
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`: поле `client_email` service account.
+- `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`: повне значення `private_key`, включно з BEGIN/END PRIVATE KEY. Збережіть переноси рядків; Worker також обробляє escaped `\\n`.
+- `GOOGLE_SPREADSHEET_ID`: частина URL книги між `/d/` та `/edit`.
+- `SESSION_SECRET`: випадковий секрет щонайменше 32 байти. Згенерувати локально можна командою `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`.
 
-У репозиторії відкрийте **Settings → Secrets and variables → Actions → Variables** і створіть:
+## 3. Початковий адміністратор
 
-| Назва | Значення |
-|---|---|
-| `GOOGLE_OAUTH_CLIENT_ID` | Web OAuth Client ID з Google Cloud Console |
-| `GOOGLE_API_KEY` | Публічний API key з обмеженням за HTTP referrer і Google Picker API |
-| `GOOGLE_CLOUD_PROJECT_NUMBER` | Числовий номер Google Cloud project (App ID для Picker) |
+У вкладці `Users` має бути перший рядок заголовків із такими полями (порядок колонок може відрізнятися):
 
-Це GitHub Actions repository variables, не secrets. Workflow передає їх у Vite як `VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_API_KEY` і `VITE_GOOGLE_APP_ID`.
+`User_ID | Username | Email | Display_Name | Password | Password_Hash | Role | All_Facilities | Facility_Codes | Is_Active | Must_Change_Password | Created_At | Updated_At | Last_Login_At | Notes`
 
-Для локальної розробки створіть `.env.local` на основі `.env.example`. У production вибір книги виконується через Google Picker; ID книги не потрібно додавати до GitHub Variables.
+Колонка `Password` залишається порожньою. Хеш записується в `Password_Hash`. Генеруйте його локально:
 
-## 3. Права на Google-книгу
+```bash
+node scripts/generate-password-hash.mjs
+```
 
-Надайте Google-акаунтам працівників доступ до робочої книги у Google Drive. Для запису їм потрібен Editor. Для читання достатній Viewer, але застосунок у поточній версії має функції запису, тож практично потрібен Editor.
+Тимчасово задайте:
+```bash
+npx wrangler secret put BOOTSTRAP_ADMIN_USERNAME
+npx wrangler secret put BOOTSTRAP_ADMIN_PASSWORD_HASH
+```
 
-Після першого входу:
-- якщо Users порожній, перший Google-акаунт автоматично додається як admin;
-- адміністратор додає інші email, ПІБ, роль, статус і коди закладів;
-- кожен доданий Google-акаунт окремо має отримати доступ до книги у Drive.
+За потреби також задайте `BOOTSTRAP_ADMIN_DISPLAY_NAME`.
 
-## 4. Робочі вкладки
+Якщо у `Users` немає жодного запису, Worker створить адміністратора з цими значеннями під час першої спроби входу. Початковий адміністратор отримає `Must_Change_Password=TRUE), тому після першого входу система примусово запропонує змінити пароль. Після успішного створення першого користувача видаліть тимчасові секрети:
 
-Застосунок перевіряє та створює такі вкладки, якщо вони відсутні:
+```bash
+npx wrangler secret delete BOOTSTRAP_ADMIN_USERNAME
+npx wrangler secret delete BOOTSTRAP_ADMIN_PASSWORD_HASH
+npx wrangler secret delete BOOTSTRAP_ADMIN_DISPLAY_NAME
+```
 
-| Аркуш | Призначення |
-|---|---|
-| Facilities | Реєстр закладів |
-| Facility_IPC_Profile | Організаційний IPC-профіль |
-| IPC_Visits | Моніторингові візити |
-| IPC_Assessments | Оцінювання за критеріями |
-| Recommendations | Коригувальні заходи |
-| Training_Events | Навчальні заходи |
-| Training_Facility_Stats | Охоплення закладів навчанням |
-| AST_Data | Результати AST |
-| WGS_Staging | Геномні результати |
-| Legal_Acts | Нормативно-правові акти |
-| Dictionaries | Довідники |
-| Users | Google-акаунти й ролі |
+Не використовуйте простий пароль. Мінімальна довжина пароля, який задає адміністратор або користувач, — 12 символів.
 
-Якщо вкладка порожня, застосунок записує стандартний рядок заголовків. Якщо заголовки вже існують, вони залишаються без змін.
+## 4. Керування користувачами
 
-## 5. Patient_ID та клінічна інформація
+У вкладці Users:
+- `Username` — унікальний логін (3–40 символів: латиниця, цифри, крапка, дефіс, підкреслення).
+- `Email` — контактна адреса, не використовується як логін.
+- `Display_Name` — ПІБ або відображуване ім'я.
+- `Role` — `admin`, `operator`, `analyst`.
+- `All_Facilities=TRUE` — доступ до всіх закладів.
+- `All_Facilities=FALSE` — доступ лише до кодів із `Facility_Codes`, розділених комою або крапкою з комою.
+- `Is_Active=FALSE` — блокування облікового запису.
+- `Must_Change_Password=TRUE` — примусова зміна пароля під час входу.
 
-Оскільки серверної псевдонімізації більше немає, не завантажуйте ПІБ, номер медичної карти, адресу, телефон, дату народження або інший прямий ідентифікатор. У Patient_ID має бути лише попередньо погоджений внутрішній псевдонім. Саме по собі хешування в браузері не перетворює клінічні дані на анонімні.
+Початковий пароль передається Worker через HTTPS, хешується на сервері та не повертається браузеру. Значення `Password` не використовується.
 
-## 6. Межі доступу
+## 5. Контроль доступу
 
-Google Sheets permissions діють на всю книгу. Роль у Users лише визначає, які функції показує інтерфейс; вона не обмежує прямий доступ Google API до вкладок. Користувач із правом доступу до книги може обійти інтерфейс і прочитати/змінити її дані через Google API.
+Worker перевіряє сесію, роль і доступ до закладів для кожного API-запиту. Для обмежених користувачів рядки фільтруються за:
+- `Facilities.EDRPOU`;
+- `AST_Data.Hospital_ID` та `WGS_Staging.Hospital_ID`;
+- `Facility_ID` у профілях IPC, візитах, оцінюваннях, рекомендаціях і статистиці навчань.
 
-Це не еквівалент row-level security або окремих прав на вкладки. Не надавайте доступ до книги тим, кому не можна переглядати її повністю. Для суворої ізоляції потрібні окремі книги з різними Drive permissions або серверний шар авторизації.
+Довідники та нормативні акти є спільними. `Training_Events` наразі розглядається як спільний реєстр заходів; деталізація за закладами зберігається у `Training_Facility_Stats`.
 
-## 7. Cloudflare deploy
+Ролі:
+- admin: повний доступ і адміністрування;
+- operator: запис у межах призначених закладів; реєстр закладів і Users змінює лише admin;
+- analyst: читання без запису.
 
-Для автоматичного розгортання потрібен GitHub Actions secret `CLOUDFLARE_API_TOKEN` із правами на Workers deployment та відповідний account. Це єдиний deployment secret у цьому процесі; Google credentials на сервері відсутні.
+Важливо: серверний контроль доступу працює лише через Worker API. Не використовуйте service account credentials у браузері або інших клієнтах.
 
-Збірка виконується командою `npm run build`, розгортання — `npx wrangler deploy`. Міграції D1 не запускаються.
+## 6. Розгортання та перевірка
+
+1. Переконайтеся, що всі чотири основні Worker secrets задані.
+2. Виконайте `npm run build`.
+3. Розгорніть `npx wrangler deploy` або злийте PR, якщо Cloudflare deploy запускається GitHub Actions.
+4. Перевірте `GET /api/health`: очікується `{"ok":true,"storage":"google-sheets"}`.
+5. Увійдіть під bootstrap admin, змініть пароль, створіть тестового оператора з обмеженим переліком кодів.
+6. Переконайтеся, що оператор бачить лише призначені заклади та не може записувати дані поза їх межами.
+
+GitHub Actions secret `CLOUDFLARE_API_TOKEN` потрібен окремо для автоматичного deploy. Не зберігайте Google private key у GitHub Actions або Vite build variables.
