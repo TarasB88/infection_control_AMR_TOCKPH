@@ -1,67 +1,50 @@
 # IPC & AMR Monitoring — Ternopil CDC
 
-Internal Ukrainian-language information and analytics MVP for facility-level infection prevention and control (IPC) monitoring and antimicrobial resistance (AMR) surveillance.
+Внутрішній україномовний вебзастосунок для моніторингу інфекційного контролю (IPC) та антимікробної резистентності (AMR) у закладах охорони здоров'я.
 
-## Implemented in the repository
+## Єдине джерело даних
 
-- Responsive Ukrainian dashboard shell and IPC/AMR modules.
-- AMR AST table and exact 16-column Excel import contract.
-- Manual AST entry and Excel import through a shared Worker/D1 validation path.
-- Downloadable Excel template with a separate instructions worksheet.
-- D1-backed password authentication with PBKDF2 password hashing and random salts.
-- Opaque server-side sessions in HttpOnly, Secure, SameSite=Strict cookies.
-- Same-origin and CSRF checks for state-changing requests.
-- First-administrator one-time setup flow protected by a Worker secret.
-- D1 user profiles with roles: `admin`, `operator`, `analyst`.
-- Facility-code scoped AST read/write permissions.
-- Admin interface to create, edit, deactivate profiles and set/reset passwords.
-- Patient_ID HMAC-SHA-256 pseudonymization.
-- Import batch metadata and actor-attributed audit events.
-- AMR map with district/community switch.
-- Read-only facility directory connection to two Google Sheets via direct XLSX export, without Google credentials or Apps Script.
+- Усі робочі дані зберігаються в одній приватній книзі Google Sheets.
+- Cloudflare D1 повністю вилучено: немає binding, міграцій, SQL-запитів або D1 API.
+- Cloudflare Worker лише роздає статичний frontend.
+- Користувач входить через Google Identity Services (OAuth).
+- Браузер напряму читає та записує Google Sheets API; service account, Google client secret, private key і Apps Script не використовуються.
+- OAuth Client ID — публічний параметр збірки, не секрет.
 
-Cloudflare Access is not required for the application sign-in flow.
+## Робочі аркуші
 
-## Production setup
+`Facilities`, `Facility_IPC_Profile`, `IPC_Visits`, `IPC_Assessments`, `Recommendations`, `Training_Events`, `Training_Facility_Stats`, `AST_Data`, `WGS_Staging`, `Legal_Acts`, `Dictionaries`, `Users`.
 
-See [Authentication and user profiles](docs/AUTHENTICATION_AND_USER_PROFILES.md):
+Відсутні аркуші створюються автоматично, а початкові заголовки додаються лише до порожніх вкладок. Уже наявні заголовки не перезаписуються.
 
-1. Apply D1 migrations `0002_user_profiles.sql` and `0003_password_sessions.sql`.
-2. Add the one-time Production secret `INITIAL_ADMIN_SETUP_TOKEN`.
-3. Deploy the current `main` branch through the connected Cloudflare Git integration (`npm run build`, then `npx wrangler deploy`). Verify the deployed commit SHA in the Cloudflare deployment details.
-4. Create the first administrator from the first-run setup form.
-5. Remove `INITIAL_ADMIN_SETUP_TOKEN` after successful setup.
-6. Keep the existing `PATIENT_HMAC_SECRET` unchanged.
-7. Admin creates staff profiles and assigns roles/facility codes.
+## Налаштування Google OAuth
 
-The previous shared `API_TOKEN` and Cloudflare Access identity flow are not used by the current application.
+1. У Google Cloud Console створіть проєкт та увімкніть Google Sheets API.
+2. Налаштуйте OAuth consent screen.
+3. Створіть OAuth Client ID типу Web application.
+4. Додайте production origin у Authorized JavaScript origins.
+5. У GitHub → Settings → Secrets and variables → Actions → Variables створіть змінну `GOOGLE_OAUTH_CLIENT_ID` з цим Client ID.
+6. Переконайтеся, що перший адміністратор має доступ до робочої книги в Google Drive.
+7. Перший Google-акаунт, який увійде, якщо Users ще не містить профілів, стане адміністратором. Після цього адміністратор додає інші email у Users.
 
-## AST data grain and fields
+Додаткові параметри наведені в [Google Sheets setup](docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md).
 
-One row represents one AST result for one isolate against one antimicrobial agent. The import schema retains MIC operator separately from MIC value and preserves S, I and R as distinct categories.
+## Важливе обмеження безпеки
 
-The current derived isolate identity uses `Hospital_ID + Sample_ID + Bacterial_Species`. Add an explicit laboratory `Isolate_ID` when the source form distinguishes multiple isolates of the same species from one sample.
+Google Sheets permissions діють на всю книгу. Ролі з аркуша Users керують інтерфейсом, але не є серверним контролем доступу до окремих вкладок або рядків. Кожен користувач, якому надано доступ до книги та який авторизувався, технічно може прочитати/змінити її вкладки через Google API.
 
-## Technology
+Не зберігайте прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте заздалегідь погоджені псевдоніми. Не надавайте доступ до книги тим, кому не можна бачити всі її дані.
 
-- React + TypeScript + Vite
-- Cloudflare Workers
-- Cloudflare D1
-- Excel parsing/export through SheetJS
-- Web Crypto API (PBKDF2, SHA-256, HMAC-SHA-256)
+## Розгортання
 
-## Local development
+GitHub Actions запускає TypeScript/Vite build та розгортання Worker. Для Cloudflare deploy все ще потрібен Cloudflare API token як GitHub Actions secret `CLOUDFLARE_API_TOKEN`. Це токен Cloudflare deployment, не Google secret.
+
+## Локальна розробка
 
 ```bash
 npm install
+# створіть .env.local на основі .env.example
 npm run dev
 npm run build
 ```
 
-## Important limitations
-
-- The current user-profile and permission model is implemented for AMR AST workflows. IPC visit/assessment, WGS and legal-act modules still need their own persisted forms, endpoints and role-aware permissions before operational use.
-- The facility directory reads two sanitized Google Sheets sources directly; the private IPC/AMR workbook is not connected. AST remains in D1 through authenticated Excel/manual import. R2 is not connected.
-- Login rate limiting is currently email-based and should be complemented with edge-level abuse protection before a broad public rollout.
-- Do not upload identifiable patient data before security review, backup/restore testing, audit-log review, retention rules and lawful-basis assessment.
-- Never change `PATIENT_HMAC_SECRET` after real imports begin unless a planned migration of pseudonyms has been designed.
