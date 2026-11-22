@@ -840,12 +840,21 @@ export default {
     }
 
     if (url.pathname === '/api/amr/ast' && request.method === 'GET') {
-      // Temporary read-only access; do not expose patient identifiers or pseudonyms.
+      // AST data is restricted to authenticated users and their assigned facilities.
+      const authenticated = await getAuthenticatedUser(request, env);
+      if (authenticated.error) return authenticated.error;
       if (!env.DB) return json({ error: 'database_unavailable' }, 503);
+      const actor = authenticated.user;
       const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 500)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
       if (!Number.isFinite(limit) || !Number.isFinite(offset)) return json({ error: 'invalid_pagination' }, 400);
+      if (actor.role !== 'admin' && actor.all_facilities !== 1 && actor.facilityCodes.length === 0) {
+        return json({ rows: [], count: 0, limit, offset, access: 'authenticated_facility_scoped' });
+      }
       try {
+        const facilityFilter = actor.role === 'admin' || actor.all_facilities === 1
+          ? ''
+          : `WHERE f.external_code IN (${actor.facilityCodes.map(() => '?').join(',')})`;
         const sql = [
           'SELECT f.external_code AS Hospital_ID, f.name AS Hospital_Name, f.oblast AS Region_Oblast,',
           'i.hromada AS Territorial_Hromada, i.settlement AS Settlement,',
@@ -858,11 +867,14 @@ export default {
           'FROM ast_results a',
           'INNER JOIN isolates i ON i.id = a.isolate_id',
           'INNER JOIN facilities f ON f.id = i.facility_id',
+          facilityFilter,
           'ORDER BY i.sampling_date DESC, i.sample_id',
           'LIMIT ? OFFSET ?',
-        ].join(' ');
-        const result = await env.DB.prepare(sql).bind(limit, offset).all<AstRow>();
-        return json({ rows: result.results ?? [], count: result.results?.length ?? 0, limit, offset, access: 'public_read_only' });
+        ].filter(Boolean).join(' ');
+        const result = await env.DB.prepare(sql)
+          .bind(...(actor.role === 'admin' || actor.all_facilities === 1 ? [] : actor.facilityCodes), limit, offset)
+          .all<AstRow>();
+        return json({ rows: result.results ?? [], count: result.results?.length ?? 0, limit, offset, access: 'authenticated_facility_scoped' });
       } catch {
         return json({ error: 'query_failed', message: 'Не вдалося прочитати AST з D1.' }, 500);
       }
