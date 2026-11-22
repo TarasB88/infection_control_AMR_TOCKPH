@@ -25,6 +25,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Validate local password-hash utility
+        run: node --check scripts/generate-password-hash.mjs
       - name: Build frontend and type-check
         run: npm run build
 
