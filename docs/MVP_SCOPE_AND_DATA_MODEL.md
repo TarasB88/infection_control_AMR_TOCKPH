@@ -84,28 +84,34 @@ Do not label a raw isolate count as prevalence. Do not calculate resistance perc
 - Not applicable and No data are distinct states and must not automatically count as non-compliant.
 - Preserve historical assessments when the instrument changes.
 
-## Suggested technical architecture
+## Selected technical architecture
 
-- Frontend: React + TypeScript + Vite; responsive UI.
-- UI: Tailwind CSS and accessible component primitives.
-- Charts: Recharts.
-- Hosting/API: Cloudflare Workers.
-- Database: relational storage (Cloudflare D1 or another approved relational database); select after schema and access-control review.
-- Attachments: Cloudflare R2 with private access.
-- Authentication: Cloudflare Access or an equivalent authenticated identity layer.
-- Excel parsing: validated import pipeline with preview, row-level errors, and explicit confirmation.
+- Frontend: React + TypeScript + Vite.
+- Hosting: Cloudflare Workers static assets only.
+- Data store: one private Google Sheets workbook; there is no Cloudflare D1 binding or SQL persistence.
+- Authentication: Google Identity Services OAuth in the browser.
+- Data access: Google Sheets API directly from the browser using the signed-in user's OAuth access token.
+- Excel parsing/export: SheetJS in the browser; imported records are appended directly to the corresponding Google Sheets tab.
+- Attachments: links only for now; private binary storage is not connected.
+
+## Current implementation constraints
+
+- Google Sheets permissions apply to the entire workbook. The Users sheet and UI role controls do not enforce per-sheet or row-level security against direct Google API calls.
+- Do not use this design as a clinical-data isolation boundary. Do not store direct patient identifiers; use previously approved pseudonyms only.
+- The initial Google account to sign in when Users has no profiles becomes the first administrator. Restrict Drive access to the workbook before first bootstrap.
+- OAuth Client ID is a public web configuration variable; no Google service account or client secret is used.
+- Cloudflare deployment still requires a Cloudflare API token in GitHub Actions. That token is unrelated to Google OAuth.
 
 ## MVP acceptance criteria
 
-- Authenticated internal access and role-based permissions.
-- Facility registry and facility profiles.
-- Visit history and criterion-level IPC assessment.
-- Recommendations with due dates, status, and verification.
-- AMR AST and WGS data linked through Sample_ID + Isolate_ID.
-- Excel import preview, validation, error reporting, and audit log.
-- Facility-level filtering and reports.
+- Google OAuth login and Google Sheets workbook connection.
+- Facility registry and facility profiles loaded from Sheets.
+- Visit history, IPC assessment, recommendations and training records stored in their own Sheets tabs.
+- AMR AST and WGS records loaded from their respective Sheets tabs.
+- Excel import/export operating directly in the browser and writing to Sheets.
+- Facility-level filtering and reports in the UI.
 - No oblast-wide aggregate indicators, rankings, or averages in the UI.
-- Persistent database storage; no reliance on browser-only/local state for production records.
+- No D1 binding, D1 migrations, SQL endpoints, or server-side application database.
 
 ## Inputs required before finalizing production schema
 
