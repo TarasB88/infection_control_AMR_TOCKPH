@@ -44,6 +44,11 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Build frontend
+        run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          VITE_GOOGLE_SHEETS_SPREADSHEET_ID: 1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc
       - name: Deploy static app to Cloudflare Worker
         run: npx wrangler deploy
         env:
