@@ -12,6 +12,7 @@ The Apps Script bridge connects the IPC & AMR dashboard to the target workbook:
   - Registry: `10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew`, tab GID `0`.
   - Monitoring: `12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ`, tab GID `933221082`.
 - Facility matching by EDRPOU, preview of new/update counts, duplicate detection, and a confirmed upsert into `Facilities`.
+- Read-only merged facility feed (`getFacilities`) that combines the two source tabs by EDRPOU and is exposed to the dashboard through `GET /api/facilities`; only organizational fields are returned to the public test view.
 - Existing target rows are not cleared. Empty source values do not erase existing values; unmapped columns and formula cells are preserved. Ambiguous duplicate EDRPOU values are skipped rather than guessed.
 - The Worker exposes admin-only preview, manual refresh, and automatic-sync controls. Manual sync attempts are recorded in the D1 audit log; automatic run status is stored in Apps Script Properties.
 
@@ -73,7 +74,15 @@ Perform the write only after a validated preview and explicit confirmation:
 {"token":"<server-side secret>","action":"syncFacilities","confirm":true}
 ```
 
-The facility actions are intended to be invoked through the authenticated admin-only Worker endpoint, not from frontend code or a public script URL.
+The facility write and trigger-management actions are invoked through the authenticated admin-only Worker endpoint, not from frontend code or a public script URL.
+
+The dashboard's temporary read-only directory uses a separate bridge action:
+
+```json
+{"token":"<server-side secret>","action":"getFacilities"}
+```
+
+The Worker exposes the merged organizational records through `GET /api/facilities`. The source spreadsheets remain private; the bridge token is held only in Worker secrets. This endpoint is read-only and does not change the source sheets or target workbook.
 
 ## Security and data handling
 
