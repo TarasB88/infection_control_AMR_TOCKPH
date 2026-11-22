@@ -766,7 +766,7 @@ export default {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'facilities_source_unavailable';
-        const status = message === 'google_sheets_not_configured' ? 503 : 502;
+        const status = ['google_sheets_not_configured','google_service_account_not_configured'].includes(message) ? 503 : 502;
         return json({
           error: 'facilities_unavailable',
           message,
