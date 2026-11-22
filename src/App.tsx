@@ -119,6 +119,10 @@ export default function App(){
       if(!active||!current)return;
       const appUser:AppUser={id:current.id,username:current.username,email:current.email,fullName:current.fullName,role:current.role,isActive:true,allFacilities:current.allFacilities,facilityCodes:current.facilityCodes,mustChangePassword:current.mustChangePassword};
       setUser(appUser);
+      if(appUser.mustChangePassword){
+        if(active)setNotice('Потрібно змінити початковий пароль перед початком роботи.');
+        return;
+      }
       await ensureWorkbook(appUser);
       if(active)setNotice('Сесію відновлено. Підключення до головної Google-книги активне.');
     }).catch(error=>{if(active)setAuthError(error instanceof Error?error.message:'Не вдалося відновити сеанс.');});
@@ -131,10 +135,14 @@ export default function App(){
       const current=await loginWithPassword(loginName,loginPassword);
       const appUser:AppUser={id:current.id,username:current.username,email:current.email,fullName:current.fullName,role:current.role,isActive:true,allFacilities:current.allFacilities,facilityCodes:current.facilityCodes,mustChangePassword:current.mustChangePassword};
       setUser(appUser);
-      await ensureWorkbook(appUser);
       setLoginPassword('');
       setAuthError('');
-      setNotice('Вхід виконано · '+appUser.username+' · '+(appUser.allFacilities?'доступ до всіх закладів':'доступ до визначених закладів')+'.');
+      if(appUser.mustChangePassword){
+        setNotice('Вхід виконано. Перед початком роботи потрібно змінити початковий пароль.');
+      }else{
+        await ensureWorkbook(appUser);
+        setNotice('Вхід виконано · '+appUser.username+' · '+(appUser.allFacilities?'доступ до всіх закладів':'доступ до визначених закладів')+'.');
+      }
       setTab('overview');
     }catch(error){
       clearGoogleSession();setUser(null);
