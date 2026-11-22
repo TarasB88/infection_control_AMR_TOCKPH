@@ -34,6 +34,19 @@ This feature is still **staged**. It has not been authorized against the live sp
 
 Do not send the bridge token in chat or put it in frontend code.
 
+
+## Automatic refresh behavior
+
+The administrator can enable or disable automatic refresh from the dashboard's Google Sheets integration panel:
+
+- An installable `onEdit` trigger is attached to each source spreadsheet. Edits are debounced for 60 seconds, so multiple nearby cell edits are grouped into one synchronization.
+- A time-driven trigger performs a reconciliation every hour as a fallback for API/import changes that do not fire spreadsheet edit triggers. Apps Script may schedule the hourly run within its hourly window rather than at an exact minute.
+- The dashboard button **Оновити зараз → Facilities** performs an immediate source read, shows the changes to be applied, and asks for confirmation before writing.
+- The administrator can inspect the last successful run, last error, active triggers, and pending debounce status in the integration panel.
+- Disabling auto-refresh removes the edit, hourly, and pending debounce triggers. It does not delete or change any spreadsheet data.
+
+Installable triggers run under the Google account that created them. The account must retain access to both source spreadsheets and edit access to the target. An edit made through a script/API may not emit an edit trigger; the hourly reconciliation covers such changes. If source rows are changed by formulas recalculating without a user edit, they are also picked up by the hourly reconciliation.
+
 ## Bridge request format
 
 All calls use POST JSON. The server-side token is required:
