@@ -588,6 +588,38 @@ export default {
       }
     }
 
+    // Public, read-only directory data for the temporary test dashboard.
+    // Only organizational attributes are returned; personal contact fields are omitted.
+    if (url.pathname === '/api/facilities' && request.method === 'GET') {
+      try {
+        const result = await callGoogleSheetsBridge(env, { action: 'getFacilities' });
+        const sourceRecords = Array.isArray(result.records) ? result.records as Array<Record<string, unknown>> : [];
+        const records = sourceRecords.map(record => ({
+          edrpou: text(record.edrpou),
+          name: text(record.name),
+          oblast: text(record.oblast),
+          district: text(record.district),
+          hromada: text(record.hromada),
+          settlement: text(record.settlement),
+          address: text(record.address),
+          ownership: text(record.ownership),
+          care_level: text(record.care_level),
+          network_status: text(record.network_status),
+          monitoring_years: text(record.monitoring_years)
+        }));
+        return json({
+          records,
+          count: records.length,
+          summary: result.summary ?? null,
+          source: 'google_sheets_live'
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'facilities_source_unavailable';
+        const status = message === 'google_sheets_not_configured' ? 503 : 502;
+        return json({ error: 'facilities_unavailable', message }, status);
+      }
+    }
+
     if (url.pathname === '/api/auth/status' && request.method === 'GET') {
       if (!env.DB) return json({ error: 'database_unavailable' }, 503);
       const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles').first<{ total: number }>();
