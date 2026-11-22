@@ -27,6 +27,7 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Validate required Google configuration
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
           VITE_GOOGLE_API_KEY: ${{ vars.GOOGLE_API_KEY }}
