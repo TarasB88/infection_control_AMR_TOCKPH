@@ -1,50 +1,52 @@
 # IPC & AMR Monitoring — Ternopil CDC
 
-Внутрішній україномовний вебзастосунок для моніторингу інфекційного контролю (IPC) та антимікробної резистентності (AMR) у закладах охорони здоров'я.
+Внутрішній вебзастосунок для моніторингу інфекційного контролю (IPC) та антимікробної резистентності (AMR).
 
-## Єдине джерело даних
+## Архітектура та сховище
 
-- Усі робочі дані зберігаються в одній приватній книзі Google Sheets.
-- Cloudflare D1 повністю вилучено: немає binding, міграцій, SQL-запитів або D1 API.
-- Cloudflare Worker лише роздає статичний frontend.
-- Користувач входить через Google Identity Services (OAuth).
-- Браузер напряму читає та записує Google Sheets API; service account, Google client secret, private key і Apps Script не використовуються.
-- OAuth Client ID, обмежений API key та числовий Google Cloud project number — публічні параметри збірки, не секрети. Picker використовує scope `drive.file` і дає доступ до вибраної книги.
+- Єдине постійне сховище робочих даних і користувачів — одна приватна Google-книга.
+- Cloudflare D1 не використовується.
+- Cloudflare Worker виконує серверну авторизацію, перевірку ролей і доступу до закладів та єдиний серверний доступ до Google Sheets API.
+- Працівники входять за логіном і паролем. Їм не потрібні Google-акаунти або доступ до книги у Drive.
+- Google service account є технічним серверним обліковим записом. Його приватний ключ зберігається лише в Cloudflare Secrets і ніколи не передається браузеру.
+- Паролі не зберігаються відкритим текстом. Worker використовує PBKDF2-HMAC-SHA256 із випадковою сіллю; сесія — підписана HttpOnly/Secure/SameSite cookie.
+- Права на заклади перевіряються на сервері: усі заклади або визначений перелік кодів.
 
 ## Робочі аркуші
 
 `Facilities`, `Facility_IPC_Profile`, `IPC_Visits`, `IPC_Assessments`, `Recommendations`, `Training_Events`, `Training_Facility_Stats`, `AST_Data`, `WGS_Staging`, `Legal_Acts`, `Dictionaries`, `Users`.
 
-Відсутні аркуші створюються автоматично, а початкові заголовки додаються лише до порожніх вкладок. Уже наявні заголовки не перезаписуються.
+У `Users` потрібні заголовки, зокрема: `User_ID`, `Username`, `Email`, `Display_Name`, `Password`, `Password_Hash`, `Role`, `All_Facilities`, `Facility_Codes`, `Is_Active`, `Must_Change_Password`, `Created_At`, `Updated_At`, `Last_Login_At`, `Notes`. Колонка `Password` має залишатися порожньою; фактичний пароль зберігається лише у `Password_Hash`. Не видаляйте цю колонку, якщо вона вже є.
 
-## Налаштування Google OAuth
+## Налаштування
 
-1. У Google Cloud Console створіть проєкт та увімкніть Google Sheets API.
-2. Налаштуйте OAuth consent screen.
-3. Створіть OAuth Client ID типу Web application.
-4. Додайте production origin у Authorized JavaScript origins.
-5. У GitHub → Settings → Secrets and variables → Actions → Variables створіть змінну `GOOGLE_OAUTH_CLIENT_ID` з цим Client ID.
-6. Переконайтеся, що перший адміністратор має доступ до робочої книги в Google Drive.
-7. Перший Google-акаунт, який увійде, якщо Users ще не містить профілів, стане адміністратором. Після цього адміністратор додає інші email у Users.
+Повна інструкція: [docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md](docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md).
 
-Додаткові параметри наведені в [Google Sheets setup](docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md).
+Коротко:
+1. Створіть Google Cloud service account та увімкніть Google Sheets API.
+2. Надайте service account Editor-доступ до головної книги.
+3. Додайте серверні секрети в Cloudflare Worker: `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `GOOGLE_SPREADSHEET_ID`, `SESSION_SECRET`.
+4. Для першого адміністратора тимчасово задайте `BOOTSTRAP_ADMIN_USERNAME` і `BOOTSTRAP_ADMIN_PASSWORD_HASH`. Після першого входу та створення запису адміністратора ці два секрети можна видалити.
+5. Розгорніть Worker. Після входу адміністратор створює облікові записи працівників у вкладці «Користувачі та доступ».
 
-## Важливе обмеження безпеки
+Для генерації початкового PBKDF2-хешу запустіть `node scripts/generate-password-hash.mjs` у локальному терміналі. Введений пароль не передається до GitHub або ChatGPT.
 
-Google Sheets permissions діють на всю книгу. Ролі з аркуша Users керують інтерфейсом, але не є серверним контролем доступу до окремих вкладок або рядків. Кожен користувач, якому надано доступ до книги та який авторизувався, технічно може прочитати/змінити її вкладки через Google API.
+## Ролі та доступ до закладів
 
-Не зберігайте прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте заздалегідь погоджені псевдоніми. Не надавайте доступ до книги тим, кому не можна бачити всі її дані.
+- `admin`: керування користувачами, доступ до всіх даних і закладів.
+- `operator`: перегляд і внесення даних у межах призначених закладів.
+- `analyst`: перегляд без запису.
+- `All_Facilities=TRUE`: доступ до всіх закладів.
+- `All_Facilities=FALSE`: доступ лише до кодів у `Facility_Codes`, розділених крапкою з комою або комою.
+
+Сервер фільтрує рядки та перевіряє scope під час запису. Google service account має доступ до всієї книги, але його ключ не розкривається клієнтам.
+
+## Безпека даних
+
+Не зберігайте прямі ідентифікатори пацієнтів. Для `Patient_ID` використовуйте погоджені псевдоніми. Доступ до системи не замінює організаційні вимоги щодо класифікації, мінімізації та захисту медичної інформації.
 
 ## Розгортання
 
-GitHub Actions запускає TypeScript/Vite build та розгортання Worker. Для Cloudflare deploy все ще потрібен Cloudflare API token як GitHub Actions secret `CLOUDFLARE_API_TOKEN`. Це токен Cloudflare deployment, не Google secret.
+GitHub Actions потребує Cloudflare API token у GitHub Actions secret `CLOUDFLARE_API_TOKEN`. Для налаштування runtime secrets використовуйте Cloudflare Dashboard або `wrangler secret put`; не додавайте приватні ключі до GitHub Variables, вихідного коду чи Vite `.env`.
 
-## Локальна розробка
-
-```bash
-npm install
-# створіть .env.local на основі .env.example
-npm run dev
-npm run build
-```
-
+Локально: `npm install`, `npm run dev`, `npm run build`.

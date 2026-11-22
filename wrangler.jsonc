@@ -6,5 +6,23 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS"
-  }
+  },
+  "ratelimits": [
+    {
+      "name": "LOGIN_IP_LIMITER",
+      "namespace_id": "2026112201",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "LOGIN_PAIR_LIMITER",
+      "namespace_id": "2026112202",
+      "simple": {
+        "limit": 8,
+        "period": 60
+      }
+    }
+  ]
 }
