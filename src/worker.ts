@@ -91,8 +91,8 @@ const callGoogleSheetsBridge = async (
 
 // Public, read-only Google Sheets CSV sources for the organizational facility directory.
 const FACILITY_CSV_SOURCES = [
-  { key: 'registry', spreadsheetId: '10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew', gid: '0' },
-  { key: 'monitoring', spreadsheetId: '12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ', gid: '933221082' },
+  { key: 'registry', spreadsheetId: '10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew', gid: '0', publishedCsvUrl: '' },
+  { key: 'monitoring', spreadsheetId: '12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ', gid: '933221082', publishedCsvUrl: '' },
 ] as const;
 
 const FACILITY_FIELD_ALIASES: Record<string, string[]> = {
@@ -166,7 +166,7 @@ const normalizeEdrpou = (value: unknown): string => {
 };
 
 const readPublicFacilityCsv = async (source: typeof FACILITY_CSV_SOURCES[number]) => {
-  const url = 'https://docs.google.com/spreadsheets/d/' + source.spreadsheetId + '/export?format=csv&gid=' + source.gid;
+  const url = source.publishedCsvUrl || ('https://docs.google.com/spreadsheets/d/' + source.spreadsheetId + '/export?format=csv&gid=' + source.gid);
   const response = await fetch(url, {
     headers: { accept: 'text/csv,text/plain;q=0.9,*/*;q=0.1' },
     redirect: 'follow',
@@ -797,7 +797,7 @@ export default {
           error: 'facilities_unavailable',
           message,
           hint: status === 503
-            ? 'Надайте доступ для читання без входу Google лише двом аркушам-джерелам реєстру та моніторингу.'
+            ? 'Опублікуйте лише потрібні аркуші-джерела як CSV і додайте їхні посилання в конфігурацію Worker.'
             : 'Перевірте заголовки та структуру CSV-аркушів джерел.',
         }, status);
       }
