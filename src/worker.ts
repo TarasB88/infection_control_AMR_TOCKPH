@@ -23,6 +23,8 @@ interface WorkerEnv {
   ASSETS?: { fetch(request: Request): Promise<Response> };
   INITIAL_ADMIN_SETUP_TOKEN?: string;
   PATIENT_HMAC_SECRET?: string;
+  GOOGLE_SHEETS_BRIDGE_URL?: string;
+  GOOGLE_SHEETS_BRIDGE_TOKEN?: string;
 }
 
 type AstRow = {
@@ -63,6 +65,27 @@ const json = (data: unknown, status = 200): Response =>
   });
 
 const text = (value: unknown): string => String(value ?? '').trim();
+
+const callGoogleSheetsBridge = async (
+  env: WorkerEnv,
+  payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
+  const endpoint = text(env.GOOGLE_SHEETS_BRIDGE_URL);
+  const token = text(env.GOOGLE_SHEETS_BRIDGE_TOKEN);
+  if (!endpoint || !token || token.length < 32) throw new Error('google_sheets_not_configured');
+  const parsed = new URL(endpoint);
+  if (parsed.protocol !== 'https:') throw new Error('google_sheets_https_required');
+  const response = await fetch(parsed.toString(), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ ...payload, token }),
+    redirect: 'follow',
+  });
+  if (!response.ok) throw new Error('google_sheets_http_' + response.status);
+  const result = await response.json() as Record<string, unknown>;
+  if (result.ok !== true) throw new Error(text(result.error) || 'google_sheets_bridge_error');
+  return result;
+};
 
 const constantTimeEqual = (left: string, right: string): boolean => {
   const a = new TextEncoder().encode(left);
@@ -309,7 +332,7 @@ const validateRows = (input: unknown): { rows: AstRow[]; issues: { rowNumber: nu
   return { rows, issues };
 };
 
-const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' | 'manual'): Promise<Response> => {
+const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' | 'manual' | 'google_sheets'): Promise<Response> => {
   const authenticated = await getAuthenticatedUser(request, env);
   if (authenticated.error) return authenticated.error;
   const actor = authenticated.user;
@@ -427,6 +450,62 @@ const importAst = async (request: Request, env: WorkerEnv, sourceType: 'excel' |
   }
 };
 
+
+const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: AuthenticatedUser): Promise<Response> => {
+  if (actor.role !== 'admin') return json({ error: 'forbidden', message: 'Потрібна роль адміністратора.' }, 403);
+  if (request.method === 'GET') {
+    try {
+      const result = await callGoogleSheetsBridge(env, { action: 'listSheets' });
+      const sheets = Array.isArray(result.sheets) ? result.sheets as Array<Record<string, unknown>> : [];
+      return json({
+        configured: true,
+        spreadsheetId: result.spreadsheetId ?? null,
+        sheets: sheets.map(sheet => ({
+          name: text(sheet.name),
+          rows: Number(sheet.rows ?? 0),
+          columns: Number(sheet.columns ?? 0),
+          // The Users worksheet is deliberately never exposed through this endpoint.
+          readable: text(sheet.name) !== 'Users',
+        })),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'google_sheets_connection_failed';
+      const status = message === 'google_sheets_not_configured' ? 503 : 502;
+      return json({ configured: status !== 503, connected: false, error: message }, status);
+    }
+  }
+  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+  let body: { action?: unknown; sheet?: unknown };
+  try { body = await request.json() as typeof body; } catch { return json({ error: 'invalid_json' }, 400); }
+  const action = text(body.action);
+  const sheet = text(body.sheet);
+  if (action === 'syncAst') {
+    try {
+      const result = await callGoogleSheetsBridge(env, { action: 'getRows', sheet: 'AST_Data' });
+      if (!Array.isArray(result.rows)) return json({ error: 'invalid_bridge_response' }, 502);
+      const syncRequest = new Request(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify({ sourceName: 'Google Sheets · AST_Data', rows: result.rows }),
+      });
+      return importAst(syncRequest, env, 'google_sheets');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'google_sheets_sync_failed';
+      return json({ error: 'google_sheets_sync_failed', message }, 502);
+    }
+  }
+  const allowed = ['Facilities', 'Facility_IPC_Profile', 'IPC_Assessments', 'Legal_Acts',
+    'Training_Events', 'Training_Facility_Stats', 'AST_Data', 'WGS_Staging', 'Dictionaries'];
+  if (action !== 'read' || !allowed.includes(sheet)) return json({ error: 'sheet_not_allowed' }, 400);
+  try {
+    const result = await callGoogleSheetsBridge(env, { action: 'getRows', sheet });
+    return json({ sheet, headers: result.headers ?? [], rows: result.rows ?? [], rowCount: result.rowCount ?? 0 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'google_sheets_read_failed';
+    return json({ error: 'google_sheets_read_failed', message }, 502);
+  }
+};
+
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const url = new URL(request.url);
@@ -468,6 +547,12 @@ export default {
       const authenticated = await getAuthenticatedUser(request, env);
       if (authenticated.error) return authenticated.error;
       return json({ user: publicUser(authenticated.user), csrfToken: authenticated.user.csrfToken });
+    }
+
+    if (url.pathname === '/api/admin/google-sheets') {
+      const authenticated = await getAuthenticatedUser(request, env);
+      if (authenticated.error) return authenticated.error;
+      return handleGoogleSheetsAdmin(request, env, authenticated.user);
     }
 
     if (url.pathname === '/api/admin/users') {
