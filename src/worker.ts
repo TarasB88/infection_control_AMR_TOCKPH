@@ -79,7 +79,9 @@ function scoped(s:Sheet,rows:Record<string,string>[],u:User){
  const fields=s==='Facilities'?['EDRPOU']:s==='AST_Data'||s==='WGS_Staging'?['Hospital_ID']:['Facility_ID','EDRPOU','Hospital_ID'];
  return rows.filter(r=>{const c=fields.map(k=>r[k]).find(Boolean)||'';return !!c&&inScope(u,c);});
 }
-function mayWrite(u:User,s:Sheet){return u.role!=='analyst'&&(s!=='Users'&&s!=='Facilities'||u.role==='admin');}
+const OPERATOR_WRITE_SHEETS:ReadonlySet<Sheet>=new Set(['Facility_IPC_Profile','IPC_Visits','IPC_Assessments','Recommendations','Training_Facility_Stats','AST_Data','WGS_Staging']);
+function mayWrite(u:User,s:Sheet){if(u.role==='admin')return s!=='Users';return u.role==='operator'&&OPERATOR_WRITE_SHEETS.has(s);}
+
 async function handle(req:Request,e:Env):Promise<Response>{
  const url=new URL(req.url),p=url.pathname;
  if(p==='/api/health'&&req.method==='GET')return reply({ok:true,storage:'google-sheets'});
@@ -120,11 +122,30 @@ async function handle(req:Request,e:Env):Promise<Response>{
    return reply({headers,rows});
   }
   if(req.method==='POST'){
-   if(!mayWrite(u,s))return reply({error:'Недостатньо прав для запису.'},403);
-   const b=await req.json() as {headers?:string[];rows?:unknown[][]};if(!Array.isArray(b.headers)||!Array.isArray(b.rows))return reply({error:'Некоректний формат запису.'},400);
-   if(b.headers.some(h=>h==='Password'||h==='Password_Hash'))return reply({error:'Пароль можна змінювати лише через адміністрування.'},400);
-   if(u.role!=='admin'&&!u.allFacilities)for(const row of b.rows){const k=s==='Facilities'?'EDRPOU':s==='AST_Data'||s==='WGS_Staging'?'Hospital_ID':'Facility_ID',i=b.headers.indexOf(k);if(i<0||!inScope(u,String(row[i]??'')))return reply({error:'Запис поза межами дозволених закладів.'},403);}
-   await append(e,s,b.headers,b.rows);return reply({ok:true});
+   if(s==='Users')return reply({error:'Користувачів можна змінювати лише через адміністративний API.'},403);
+   if(!mayWrite(u,s))return reply({error:'Недостатньо прав для запису до цього аркуша.'},403);
+   const b=await req.json() as {headers?:string[];rows?:unknown[][]};
+   if(!Array.isArray(b.headers)||!Array.isArray(b.rows)||b.headers.length===0)return reply({error:'Некоректний формат запису.'},400);
+   if(b.headers.some(h=>typeof h!=='string'||!h.trim())||new Set(b.headers.map(h=>h.toLowerCase())).size!==b.headers.length)return reply({error:'Заголовки колонок некоректні.'},400);
+   if(b.headers.includes('Password')||b.headers.includes('Password_Hash'))return reply({error:'Пароль можна змінювати лише через адміністративний API.'},400);
+   if(b.rows.length>1000||b.rows.some(row=>!Array.isArray(row)||row.length!==b.headers!.length))return reply({error:'Кількість значень у рядках не відповідає схемі аркуша.'},400);
+   const existing=await readTable(e,s);
+   let headers=existing.headers;
+   if(!headers.length){
+    if(u.role!=='admin'||b.rows.length!==1||b.rows[0].some((value,index)=>String(value??'')!==b.headers![index]))return reply({error:'Порожній аркуш може ініціалізувати лише адміністратор рядком заголовків.'},403);
+    headers=b.headers;
+   }else if(b.headers.length!==headers.length||b.headers.some((header,index)=>header!==headers[index])){
+    return reply({error:'Схема колонок не збігається із заголовками аркуша. Оновіть дані й повторіть спробу.'},400);
+   }
+   if(u.role!=='admin'){
+    const scopeColumn=s==='AST_Data'||s==='WGS_Staging'?'Hospital_ID':'Facility_ID';
+    const scopeIndex=headers.indexOf(scopeColumn);
+    if(scopeIndex<0)return reply({error:'Для цього аркуша не налаштовано поле контролю доступу до закладу.'},403);
+    for(const row of b.rows){
+     if(!inScope(u,String(row[scopeIndex]??'').trim()))return reply({error:'Запис поза межами дозволених закладів.'},403);
+    }
+   }
+   await append(e,s,headers,b.rows);return reply({ok:true});
   }
  }
  if(p==='/api/admin/users'&&req.method==='POST'){
