@@ -17,7 +17,7 @@
       }
     },
     {
-      "name": "LOGIN_USERNAME_LIMITER",
+      "name": "LOGIN_PAIR_LIMITER",
       "namespace_id": "2026112202",
       "simple": {
         "limit": 8,
