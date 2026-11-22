@@ -62,11 +62,18 @@ function doPost(e) {
           const headers = lastColumn > 0
             ? sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0].map(v => String(v).trim())
             : [];
+          const normalized = headers.map(h => h.toLocaleLowerCase());
+          const headerIssues = [];
+          if (!headers.length) headerIssues.push('missing_header_row');
+          if (headers.some(h => !h)) headerIssues.push('blank_header');
+          if (new Set(normalized).size !== normalized.length) headerIssues.push('duplicate_header');
+          if (sheet.getLastRow() > 1 && !headers.length) headerIssues.push('rows_without_headers');
           return {
             name: sheet.getName(),
             rows: Math.max(0, sheet.getLastRow() - 1),
             columns: lastColumn,
-            headers
+            headers,
+            headerIssues
           };
         })
       });
@@ -82,10 +89,17 @@ function doPost(e) {
       if (sheetName === 'Users') return output_({ ok: false, error: 'users_sheet_requires_dedicated_auth_flow' });
       const lastRow = sheet.getLastRow();
       const lastCol = sheet.getLastColumn();
-      if (lastRow < 1 || lastCol < 1) return output_({ ok: true, sheet: sheetName, headers: [], rows: [] });
-      const values = sheet.getRange(1, 1, Math.min(lastRow, CONFIG.maxRows + 1), lastCol).getDisplayValues();
+      if (lastRow < 1 || lastCol < 1) return output_({ ok: true, sheet: sheetName, headers: [], rows: [], rowCount: 0 });
+      if (lastRow - 1 > CONFIG.maxRows) {
+        return output_({ ok: false, error: 'row_limit_exceeded', sheet: sheetName, rowCount: lastRow - 1, maxRows: CONFIG.maxRows });
+      }
+      const values = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
       const headers = values.shift().map(v => String(v).trim());
       if (headers.some(h => !h)) return output_({ ok: false, error: 'blank_header', sheet: sheetName }, 422);
+      const normalizedHeaders = headers.map(h => h.toLocaleLowerCase());
+      if (new Set(normalizedHeaders).size !== normalizedHeaders.length) {
+        return output_({ ok: false, error: 'duplicate_header', sheet: sheetName }, 422);
+      }
       const rows = values.filter(row => row.some(cell => cell !== '')).map(row => {
         const item = {};
         headers.forEach((header, i) => item[header] = row[i] == null ? '' : row[i]);
@@ -105,6 +119,10 @@ function doPost(e) {
       if (!headers.length || !keyColumn || !headers.includes(keyColumn)) {
         return output_({ ok: false, error: 'invalid_key_column_or_headers' }, 422);
       }
+      const normalizedHeaders = headers.map(h => h.toLocaleLowerCase());
+      if (headers.some(h => !h) || new Set(normalizedHeaders).size !== normalizedHeaders.length) {
+        return output_({ ok: false, error: 'invalid_headers' }, 422);
+      }
       const existing = sheet.getLastRow() > 1
         ? sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues()
         : [];
@@ -114,12 +132,27 @@ function doPost(e) {
         const key = String(row[keyIndex] == null ? '' : row[keyIndex]).trim();
         if (key) index.set(key, i + 2);
       });
-      let updated = 0, inserted = 0;
+      const incomingKeys = new Set();
       body.rows.forEach(record => {
         if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('invalid_record');
         const key = String(record[keyColumn] == null ? '' : record[keyColumn]).trim();
         if (!key) throw new Error('missing_key:' + keyColumn);
-        const values = headers.map(h => Object.prototype.hasOwnProperty.call(record, h) ? record[h] : '');
+        if (incomingKeys.has(key)) throw new Error('duplicate_input_key');
+        incomingKeys.add(key);
+      });
+      const lock = LockService.getScriptLock();
+      if (!lock.tryLock(10000)) return output_({ ok: false, error: 'write_busy_retry' }, 409);
+      let updated = 0, inserted = 0;
+      try {
+      body.rows.forEach(record => {
+        if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('invalid_record');
+        const key = String(record[keyColumn] == null ? '' : record[keyColumn]).trim();
+        if (!key) throw new Error('missing_key:' + keyColumn);
+        const values = headers.map(h => {
+          const value = Object.prototype.hasOwnProperty.call(record, h) ? record[h] : '';
+          // Prevent untrusted text from being interpreted as a spreadsheet formula.
+          return typeof value === 'string' && /^[=+@]/.test(value) ? "'" + value : value;
+        });
         const rowNumber = index.get(key);
         if (rowNumber) {
           sheet.getRange(rowNumber, 1, 1, headers.length).setValues([values]);
@@ -129,12 +162,17 @@ function doPost(e) {
           inserted++;
         }
       });
+      } finally {
+        lock.releaseLock();
+      }
       return output_({ ok: true, sheet: sheetName, inserted, updated });
     }
 
     return output_({ ok: false, error: 'unknown_action' }, 400);
   } catch (err) {
-    return output_({ ok: false, error: 'bridge_error', message: String(err && err.message || err) }, 500);
+    const message = String(err && err.message || err);
+    const safeMessage = /^(invalid_record|missing_key:[A-Za-z0-9_ -]{1,80}|duplicate_input_key)$/.test(message) ? message : 'internal_error';
+    return output_({ ok: false, error: 'bridge_error', message: safeMessage }, 500);
   }
 }
 
