@@ -43,7 +43,7 @@ jobs:
         run: npm install
       - name: Build frontend
         run: npm run build
-      - name: Deploy static app to Cloudflare Worker
+      - name: Deploy Worker API and static dashboard
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
