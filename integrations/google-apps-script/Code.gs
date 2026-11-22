@@ -459,6 +459,7 @@ function installFacilitiesAutoSync_() {
   const props = PropertiesService.getScriptProperties();
   const triggers = ScriptApp.getProjectTriggers();
   const handler = 'sourceSpreadsheetEditHandler_';
+  const changeHandler = 'sourceSpreadsheetChangeHandler_';
   const created = [];
   CONFIG.facilitySources.forEach(source => {
     const exists = triggers.some(trigger =>
@@ -469,6 +470,15 @@ function installFacilitiesAutoSync_() {
     if (!exists) {
       ScriptApp.newTrigger(handler).forSpreadsheet(source.spreadsheetId).onEdit().create();
       created.push('onEdit:' + source.key);
+    }
+    const hasChange = ScriptApp.getProjectTriggers().some(trigger =>
+      trigger.getHandlerFunction() === changeHandler &&
+      trigger.getTriggerSourceId() === source.spreadsheetId &&
+      trigger.getEventType() === ScriptApp.EventType.ON_CHANGE
+    );
+    if (!hasChange) {
+      ScriptApp.newTrigger(changeHandler).forSpreadsheet(source.spreadsheetId).onChange().create();
+      created.push('onChange:' + source.key);
     }
   });
   const hasHourly = ScriptApp.getProjectTriggers().some(trigger =>
@@ -495,7 +505,7 @@ function setupFacilitiesAutoSync() {
 }
 
 function removeFacilitiesAutoSync_() {
-  const handlers = ['sourceSpreadsheetEditHandler_', 'scheduledFacilitiesSync_', 'debouncedFacilitiesSync_'];
+  const handlers = ['sourceSpreadsheetEditHandler_', 'sourceSpreadsheetChangeHandler_', 'scheduledFacilitiesSync_', 'debouncedFacilitiesSync_'];
   let deleted = 0;
   ScriptApp.getProjectTriggers().forEach(trigger => {
     if (handlers.indexOf(trigger.getHandlerFunction()) >= 0) {
@@ -517,6 +527,10 @@ function getFacilitiesAutoSyncStatus_() {
     trigger.getHandlerFunction() === 'sourceSpreadsheetEditHandler_' &&
     trigger.getEventType() === ScriptApp.EventType.ON_EDIT
   ).map(trigger => trigger.getTriggerSourceId());
+  const changeTriggers = triggers.filter(trigger =>
+    trigger.getHandlerFunction() === 'sourceSpreadsheetChangeHandler_' &&
+    trigger.getEventType() === ScriptApp.EventType.ON_CHANGE
+  ).map(trigger => trigger.getTriggerSourceId());
   const hourly = triggers.some(trigger =>
     trigger.getHandlerFunction() === 'scheduledFacilitiesSync_' &&
     trigger.getEventType() === ScriptApp.EventType.CLOCK
@@ -524,8 +538,9 @@ function getFacilitiesAutoSyncStatus_() {
   let lastSummary = null;
   try { lastSummary = JSON.parse(props.getProperty('FACILITIES_AUTO_SYNC_LAST_SUMMARY') || 'null'); } catch (_) {}
   return {
-    enabled: enabled && (editTriggers.length > 0 || hourly),
+    enabled: enabled && (editTriggers.length > 0 || changeTriggers.length > 0 || hourly),
     sourceEditTriggers: editTriggers.length,
+    sourceChangeTriggers: changeTriggers.length,
     hourlyFallback: hourly,
     configuredAt: props.getProperty('FACILITIES_AUTO_SYNC_CONFIGURED_AT') || '',
     lastAttemptAt: props.getProperty('FACILITIES_AUTO_SYNC_LAST_ATTEMPT_AT') || '',
@@ -568,10 +583,10 @@ function runFacilitiesSync_(source) {
   }
 }
 
-function sourceSpreadsheetEditHandler_(event) {
+function queueFacilitiesAutoSync_() {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty('FACILITIES_AUTO_SYNC_ENABLED') !== 'true') return;
-  // Debounce rapid consecutive edits so a paste or multi-cell update causes one sync.
+  // Debounce rapid consecutive edits and structural changes into one sync.
   const hasPending = ScriptApp.getProjectTriggers().some(trigger =>
     trigger.getHandlerFunction() === 'debouncedFacilitiesSync_' &&
     trigger.getEventType() === ScriptApp.EventType.CLOCK
@@ -580,6 +595,14 @@ function sourceSpreadsheetEditHandler_(event) {
   if (!hasPending) {
     ScriptApp.newTrigger('debouncedFacilitiesSync_').timeBased().after(60 * 1000).create();
   }
+}
+
+function sourceSpreadsheetEditHandler_(event) {
+  queueFacilitiesAutoSync_();
+}
+
+function sourceSpreadsheetChangeHandler_(event) {
+  queueFacilitiesAutoSync_();
 }
 
 function debouncedFacilitiesSync_() {
