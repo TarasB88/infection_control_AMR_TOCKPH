@@ -9,7 +9,7 @@
 - Cloudflare Worker лише роздає статичний frontend.
 - Користувач входить через Google Identity Services (OAuth).
 - Браузер напряму читає та записує Google Sheets API; service account, Google client secret, private key і Apps Script не використовуються.
-- OAuth Client ID — публічний параметр збірки, не секрет.
+- OAuth Client ID, обмежений API key та числовий Google Cloud project number — публічні параметри збірки, не секрети. Picker використовує scope `drive.file` і дає доступ до вибраної книги.
 
 ## Робочі аркуші
 
