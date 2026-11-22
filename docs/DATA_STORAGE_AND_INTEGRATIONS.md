@@ -32,11 +32,15 @@ R2 is not currently connected. It may later store source workbooks, generated ex
 
 ### Google Sheets
 
-Google Sheets is a planned optional integration, not an active data source. The recommended initial model is one-way inbound synchronization:
+The read-only facility directory uses the same lightweight integration pattern as the influenza dashboard:
 
-`Google Sheets → Worker → validation → D1`
+`Google Sheets CSV export → Cloudflare Worker → read-only facility directory`
 
-Use least-privilege authorization, store credentials only as Worker secrets, and require an immutable source-record ID. Do not use spreadsheet row numbers as record identities. D1 remains the system of record.
+The Worker reads two allow-listed source tabs by spreadsheet ID and GID, parses CSV, matches facilities by EDRPOU, merges monitoring attributes, and returns only organizational fields. No Apps Script deployment, bridge token, or Google API credential is required for this read path.
+
+**Access prerequisite:** the two source tabs must be published or shared for read access without Google sign-in. Only publish the specific organizational tabs needed for the directory. Do not publish the target workbook's `Users` sheet, passwords, patient-level data, or other restricted content. The endpoint does not expose director, email, or phone fields.
+
+This direct CSV path is read-only and does not write to D1 or back to Google Sheets. The AST import, protected administrative sheet inspection, and target-sheet upsert workflows still use the staged Apps Script bridge until they are separately migrated to an approved CSV or authenticated API design. D1 remains the system of record for user accounts, sessions, and persisted AMR data.
 
 ## Privacy and governance
 
