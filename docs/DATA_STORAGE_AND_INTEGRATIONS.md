@@ -32,17 +32,18 @@ R2 is not currently connected. It may later store source workbooks, generated ex
 
 ### Google Sheets
 
-Google Sheets are accessed directly by the Cloudflare Worker through the official Google Sheets API:
+The Worker reads the two facility-directory sources directly through Google's XLSX export endpoint:
 
-`Private Google Sheets → Google Sheets API → Cloudflare Worker → authenticated application`
+`Google Sheets export URL → Cloudflare Worker → authenticated facility directory`
 
-No Google Apps Script project, Web App, `doPost()` endpoint, public CSV export or bridge token is required. The Worker creates a short-lived OAuth access token from a Google service-account key, reads the two allow-listed source tabs by spreadsheet ID and GID, validates headers, matches facilities by EDRPOU and merges monitoring attributes. The API response exposes organizational fields only; director names, email addresses and phone numbers are never returned.
+This is a read-only connection. It does not use the Google Sheets API, OAuth, a service account, API keys, private keys, Apps Script, a Web App, or a bridge token. The Worker parses the selected GIDs, validates source headers, merges facilities by EDRPOU and returns organizational fields only.
 
-The service account must have Viewer access to both source workbooks and Editor access to the target workbook `1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc` because the administrator can synchronize the merged facility directory into its `Facilities` tab. The service-account email and private key are Cloudflare Worker secrets named `GOOGLE_SERVICE_ACCOUNT_EMAIL` and `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`; never commit or share the private key. The `Users` worksheet is excluded from generic read and write operations.
+The export endpoint must be able to read each source without an interactive Google login. Google link-view permissions apply to the whole workbook, not just the selected tab. Use dedicated sanitized source workbooks containing only non-sensitive organizational fields; never expose books with patient-level records, personal contacts, credentials or restricted tabs. The Worker does not write back to Google Sheets.
 
-Facility preview and manual synchronization, sheet inspection, and AST import use direct Sheets API calls. Apps Script installable triggers are not used; automatic synchronization is not enabled in this direct-API implementation.
+The private IPC/AMR target workbook is not connected to the Worker. AST data enters D1 through authenticated Excel import or manual entry; Patient_ID is HMAC-pseudonymized server-side. The app does not publish or read the private `AST_Data` or `Users` worksheets. WGS, IPC assessments, training and legal-act modules still require their own persisted forms and endpoints before operational use.
 
-D1 remains the system of record for user accounts, sessions and persisted AMR data. AST import and manual entry continue through authenticated Worker endpoints.
+The application may still require `INITIAL_ADMIN_SETUP_TOKEN` for first administrator creation and `PATIENT_HMAC_SECRET` for patient-ID pseudonymization. These are application-security settings, not Google credentials.
+
 ## Privacy and governance
 
 - Do not store direct patient identifiers in D1.
