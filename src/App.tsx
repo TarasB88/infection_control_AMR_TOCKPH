@@ -110,7 +110,7 @@ export default function App(){
    const data=await readApiJson<{records?:FacilityRecord[];count?:number;message?:string;error?:string}>(response);
    if(!response.ok)throw new Error(data.message||data.error||'HTTP '+response.status);
    setFacilities(Array.isArray(data.records)?data.records:[]);
-   if(!Array.isArray(data.records)||data.records.length===0)setFacilityError('Джерело відповіло, але не повернуло жодного закладу. Перевірте приватне серверне з’єднання з Google Sheets та доступність вихідних аркушів.');
+   if(!Array.isArray(data.records)||data.records.length===0)setFacilityError('Джерело відповіло, але не повернуло жодного закладу. Перевірте доступність двох вихідних Google-таблиць для серверного XLSX-завантаження та правильність ID аркушів.');
   }catch(error){
    setFacilities([]);
    setFacilityError(error instanceof Error?error.message:'Не вдалося завантажити реєстр закладів.');
