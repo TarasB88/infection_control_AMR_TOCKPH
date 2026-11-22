@@ -29,7 +29,8 @@ jobs:
         run: npm run build
         env:
           VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
-          VITE_GOOGLE_SHEETS_SPREADSHEET_ID: 1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc
+          VITE_GOOGLE_API_KEY: ${{ vars.GOOGLE_API_KEY }}
+          VITE_GOOGLE_APP_ID: ${{ vars.GOOGLE_CLOUD_PROJECT_NUMBER }}
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -48,7 +49,8 @@ jobs:
         run: npm run build
         env:
           VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
-          VITE_GOOGLE_SHEETS_SPREADSHEET_ID: 1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc
+          VITE_GOOGLE_API_KEY: ${{ vars.GOOGLE_API_KEY }}
+          VITE_GOOGLE_APP_ID: ${{ vars.GOOGLE_CLOUD_PROJECT_NUMBER }}
       - name: Deploy static app to Cloudflare Worker
         run: npx wrangler deploy
         env:
