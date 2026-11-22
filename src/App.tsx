@@ -6,7 +6,7 @@ import { AmrMap } from './components/AmrMap';
 import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import {
-  appendSheetRows, clearGoogleSession, createUser, getCurrentUser, GOOGLE_SHEET_TABS, loginWithPassword, readSheetTable,
+  appendSheetRows, changePassword, clearGoogleSession, createUser, getCurrentUser, GOOGLE_SHEET_TABS, loginWithPassword, readSheetTable,
   type GoogleSheetTab, type SheetRecord,
 } from './lib/google-sheets';
 
@@ -69,6 +69,9 @@ export default function App(){
   const [user,setUser]=useState<AppUser|null>(null);
   const [loginName,setLoginName]=useState('');
   const [loginPassword,setLoginPassword]=useState('');
+  const [currentPassword,setCurrentPassword]=useState('');
+  const [newPassword,setNewPassword]=useState('');
+  const [passwordSaving,setPasswordSaving]=useState(false);
   const [authLoading,setAuthLoading]=useState(false);
   const [authError,setAuthError]=useState('');
   const [notice,setNotice]=useState('Увійдіть за логіном і паролем, щоб підключитися до робочої книги.');
@@ -133,6 +136,18 @@ export default function App(){
       clearGoogleSession();setUser(null);
       setAuthError(error instanceof Error?error.message:'Не вдалося увійти в систему.');
     }finally{setAuthLoading(false);}
+  };
+
+  const updatePassword=async(event:FormEvent)=>{
+    event.preventDefault();
+    setPasswordSaving(true);setAuthError('');
+    try{
+      const updated=await changePassword(currentPassword,newPassword);
+      setUser(previous=>previous?{...previous,mustChangePassword:updated.mustChangePassword}:previous);
+      setCurrentPassword('');setNewPassword('');
+      setNotice('Пароль успішно змінено.');
+    }catch(error){setAuthError(error instanceof Error?error.message:'Не вдалося змінити пароль.');}
+    finally{setPasswordSaving(false);}
   };
 
   const refreshAll=async()=>{
@@ -261,6 +276,19 @@ export default function App(){
         <button className="primary" type="submit">Увійти</button>
       </form>}
       <small>Обліковий запис створює адміністратор системи. Google-акаунт працівника не потрібен.</small>
+    </div></div>;
+  }
+
+  if(user.mustChangePassword){
+    return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>Зміна початкового пароля</h1>
+      <p>Адміністратор видав вам початковий пароль. Перед продовженням роботи встановіть власний пароль (не менше 12 символів).</p>
+      {authError&&<p className="training-error">{authError}</p>}
+      <form className="authform" onSubmit={updatePassword}>
+        <label>Поточний пароль<input type="password" autoComplete="current-password" value={currentPassword} onChange={e=>setCurrentPassword(e.target.value)} required/></label>
+        <label>Новий пароль<input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={newPassword} onChange={e=>setNewPassword(e.target.value)} required/></label>
+        <button className="primary" type="submit" disabled={passwordSaving}>{passwordSaving?'Збереження…':'Змінити пароль'}</button>
+      </form>
+      <button className="btn" onClick={signOut}>Вийти</button>
     </div></div>;
   }
 
