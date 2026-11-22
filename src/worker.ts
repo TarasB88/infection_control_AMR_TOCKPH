@@ -113,7 +113,7 @@ const FACILITY_FIELD_ALIASES: Record<string, string[]> = {
 };
 
 const parseCsvRows = (input: string): string[][] => {
-  const source = input.replace(/^\\uFEFF/, '');
+  const source = input.replace(/^\uFEFF/, '');
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';
@@ -128,8 +128,8 @@ const parseCsvRows = (input: string): string[][] => {
     } else if (char === ',' && !quoted) {
       row.push(cell);
       cell = '';
-    } else if ((char === '\\n' || char === '\\r') && !quoted) {
-      if (char === '\\r' && source[i + 1] === '\\n') i += 1;
+    } else if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && source[i + 1] === '\n') i += 1;
       row.push(cell);
       if (row.some(value => value.trim() !== '')) rows.push(row);
       row = [];
@@ -173,7 +173,7 @@ const readPublicFacilityCsv = async (source: typeof FACILITY_CSV_SOURCES[number]
   });
   if (!response.ok) throw new Error('facility_csv_' + source.key + '_http_' + response.status);
   const csv = await response.text();
-  if (!csv || /^\\s*</.test(csv)) throw new Error('facility_csv_' + source.key + '_not_public');
+  if (!csv || /^\s*</.test(csv)) throw new Error('facility_csv_' + source.key + '_not_public');
   const matrix = parseCsvRows(csv);
   if (matrix.length < 2) throw new Error('facility_csv_' + source.key + '_empty');
   const headers = matrix[0].map(value => value.trim());
@@ -203,7 +203,7 @@ const readPublicFacilityCsv = async (source: typeof FACILITY_CSV_SOURCES[number]
 const mergeFacilityText = (left: string, right: string, field: string): string => {
   const values: string[] = [];
   [left, right].forEach(value => {
-    String(value || '').split(field === 'monitoring_years' ? /[,;\\n/]+/ : /\\s*;\\s*/)
+    String(value || '').split(field === 'monitoring_years' ? /[,;\n/]+/ : /\s*;\s*/)
       .forEach(part => {
         const cleaned = part.trim();
         if (cleaned && !values.includes(cleaned)) values.push(cleaned);
