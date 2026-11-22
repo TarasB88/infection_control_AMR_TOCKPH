@@ -32,16 +32,15 @@ R2 is not currently connected. It may later store source workbooks, generated ex
 
 ### Google Sheets
 
-The read-only facility directory uses the same lightweight integration pattern as the influenza dashboard:
+Facility source spreadsheets remain private and are read only by the server-side Google Apps Script bridge:
 
-`Google Sheets CSV export → Cloudflare Worker → read-only facility directory`
+`Private source spreadsheets → Apps Script bridge → Cloudflare Worker → authenticated facility directory`
 
-The Worker reads two allow-listed source tabs by spreadsheet ID and GID, parses CSV, matches facilities by EDRPOU, merges monitoring attributes, and returns only organizational fields. No Apps Script deployment, bridge token, or Google API credential is required for this read path.
+The bridge reads the two allow-listed source tabs by spreadsheet ID and GID, validates their headers, matches facilities by EDRPOU, merges monitoring attributes and returns the merged records to the Worker. The Worker requires an authenticated session and returns only organizational fields; director names, email addresses and phone numbers are filtered out before the API response.
 
-**Access prerequisite:** publish only the two required organizational tabs as CSV (`File → Share → Publish to web → select the individual sheet → CSV`). Do not publish an entire workbook if it contains other tabs or personal data. Store each generated CSV URL in the corresponding `publishedCsvUrl` property in `FACILITY_CSV_SOURCES` in `src/worker.ts`. The endpoint does not expose director, email, or phone fields. Google documents that individual sheets can be selected for publication and that published content updates when the source changes; review the published-content settings before publishing.
+Do not publish the source tabs or workbooks to the web. The bridge token and endpoint are server-side Worker secrets and must never be placed in browser code, public sheets, source control or chat. The existing protected administrative bridge also supports sheet inspection and controlled synchronization. The `Users` worksheet is excluded from generic read and write operations.
 
-This direct CSV path is read-only and does not write to D1 or back to Google Sheets. The AST import, protected administrative sheet inspection, and target-sheet upsert workflows still use the staged Apps Script bridge until they are separately migrated to an approved CSV or authenticated API design. D1 remains the system of record for user accounts, sessions, and persisted AMR data.
-
+D1 remains the system of record for user accounts, sessions and persisted AMR data. AST import and manual entry continue through authenticated Worker endpoints.
 ## Privacy and governance
 
 - Do not store direct patient identifiers in D1.
