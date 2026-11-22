@@ -16,7 +16,7 @@
 ## 1. Google Cloud project
 
 1. Відкрийте Google Cloud Console та створіть або виберіть проєкт.
-2. Увімкніть **Google Sheets API**.
+2. Увімкніть **Google Sheets API**, **Google Drive API** та **Google Picker API**.
 3. Налаштуйте OAuth consent screen (назва застосунку, контакт, тип користувачів/аудиторія).
 4. Створіть credential типу **OAuth Client ID → Web application**.
 5. У Authorized JavaScript origins додайте:
@@ -33,8 +33,10 @@
 | Назва | Значення |
 |---|---|
 | `GOOGLE_OAUTH_CLIENT_ID` | Web OAuth Client ID з Google Cloud Console |
+| `GOOGLE_API_KEY` | Публічний API key з обмеженням за HTTP referrer і Google Picker API |
+| `GOOGLE_CLOUD_PROJECT_NUMBER` | Числовий номер Google Cloud project (App ID для Picker) |
 
-Це GitHub Actions repository variable, не secret. Workflow передає його в Vite як `VITE_GOOGLE_CLIENT_ID`.
+Це GitHub Actions repository variables, не secrets. Workflow передає їх у Vite як `VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_API_KEY` і `VITE_GOOGLE_APP_ID`.
 
 ID робочої книги зафіксований у workflow і в `.env.example`. Для локальної розробки створіть `.env.local` на основі `.env.example`.
 
