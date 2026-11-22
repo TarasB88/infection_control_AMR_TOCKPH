@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-worker-production
+  # Keep production deploys isolated from feature-branch and pull-request CI runs.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
