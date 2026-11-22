@@ -7,7 +7,7 @@ import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import {
   appendSheetRows, clearGoogleSession, createUser, getCurrentUser, GOOGLE_SHEET_TABS, loginWithPassword, readSheetTable,
-  type AppSessionUser, type GoogleSheetTab, type SheetRecord,
+  type GoogleSheetTab, type SheetRecord,
 } from './lib/google-sheets';
 
 type Tab = 'overview'|'facilities'|'visits'|'ipc'|'training'|'amr'|'wgs'|'recommendations'|'imports'|'legal'|'users';
@@ -51,15 +51,7 @@ const getCell=(record:SheetRecord,names:string[],fallback='')=>{
   return fallback;
 };
 const parseAst=(record:SheetRecord):AstRow=>Object.fromEntries(AST_HEADERS.map(key=>[key,getCell(record,[key])])) as unknown as AstRow;
-const parseUser=(record:SheetRecord):AppUser=>({
-  id:getCell(record,['Google_Sub','Google_Subject','Google_ID'])||getCell(record,['Email']).toLowerCase(),
-  email:getCell(record,['Email']).toLowerCase(),
-  fullName:getCell(record,['Full_Name','ПІБ'])||getCell(record,['Email']),
-  role:(['admin','operator','analyst'].includes(getCell(record,['Role']).toLowerCase())?getCell(record,['Role']).toLowerCase():'analyst') as Role,
-  isActive:getCell(record,['Is_Active'])===''||['true','1','yes','так','active'].includes(getCell(record,['Is_Active']).toLowerCase()),
-  allFacilities:['true','1','yes','так'].includes(getCell(record,['All_Facilities']).toLowerCase()),
-  facilityCodes:getCell(record,['Facility_Codes']).split(/[;,\n]/).map(v=>v.trim()).filter(Boolean),
-});
+
 const facility=(r:SheetRecord)=>({
   edrpou:getCell(r,['EDRPOU','ЄДРПОУ','Hospital_ID']),
   name:getCell(r,['Name','Назва','Hospital_Name']),
