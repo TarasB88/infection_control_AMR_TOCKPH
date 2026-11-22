@@ -312,14 +312,57 @@ function mergeUniqueFacilityText_(left, right, field) {
 }
 
 function getMergedFacilityRecords_() {
-  const merged = getMergedFacilityRecords_();
-  const sourceA = merged.sourceA;
-  const sourceB = merged.sourceB;
-  const duplicateRegistryIds = merged.duplicateRegistryIds;
-  const duplicateMonitoringIds = merged.duplicateMonitoringIds;
-  const records = merged.records;
-  const incompleteRows = merged.incompleteRows;
+  const sourceA = readFacilitySource_(CONFIG.facilitySources[0]);
+  const sourceB = readFacilitySource_(CONFIG.facilitySources[1]);
 
+  const registryCounts = {};
+  sourceA.records.forEach(item => {
+    const id = item.record.edrpou;
+    registryCounts[id] = (registryCounts[id] || 0) + 1;
+  });
+  const duplicateRegistryIds = Object.keys(registryCounts).filter(id => registryCounts[id] > 1);
+  const duplicateRegistrySet = new Set(duplicateRegistryIds);
+
+  const monitoringById = {};
+  let duplicateMonitoringIds = 0;
+  sourceB.records.forEach(item => {
+    const record = item.record;
+    if (!monitoringById[record.edrpou]) monitoringById[record.edrpou] = {};
+    else duplicateMonitoringIds++;
+    const current = monitoringById[record.edrpou];
+    Object.keys(record).forEach(field => {
+      if (field !== 'edrpou') {
+        current[field] = mergeUniqueFacilityText_(current[field], record[field], field);
+      }
+    });
+  });
+
+  const registryById = {};
+  sourceA.records.forEach(item => {
+    if (!duplicateRegistrySet.has(item.record.edrpou)) {
+      registryById[item.record.edrpou] = item.record;
+    }
+  });
+
+  const allIds = new Set(Object.keys(registryById).concat(Object.keys(monitoringById)));
+  const records = [];
+  let incompleteRows = 0;
+  allIds.forEach(edrpou => {
+    const primary = registryById[edrpou] || {};
+    const secondary = monitoringById[edrpou] || {};
+    const record = { edrpou: edrpou };
+    Object.keys(FACILITY_FIELD_ALIASES_).forEach(field => {
+      if (field === 'edrpou') return;
+      const secondaryFirst = ['care_level', 'network_status', 'monitoring_years'].indexOf(field) >= 0;
+      record[field] = secondaryFirst
+        ? (secondary[field] || primary[field] || '')
+        : (primary[field] || secondary[field] || '');
+    });
+    if (!record.name) { incompleteRows++; return; }
+    records.push(record);
+  });
+
+  records.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'uk'));
   return {
     sourceA: sourceA,
     sourceB: sourceB,
