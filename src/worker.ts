@@ -95,7 +95,7 @@ const googleToken=async(env:WorkerEnv):Promise<string>=>{
  const now=Math.floor(Date.now()/1000);if(googleTokenCache&&googleTokenCache.expiresAt>now+60)return googleTokenCache.token;
  const email=text(env.GOOGLE_SERVICE_ACCOUNT_EMAIL),pem=text(env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
  if(!email||!pem)throw new Error('google_service_account_not_configured');
- const keyText=pem.replace(/-----BEGIN PRIVATE KEY-----/g,'').replace(/-----END PRIVATE KEY-----/g,'').replace(/\s/g,'');
+ const keyText=pem.replace(/\\n/g,'\n').replace(/-----BEGIN PRIVATE KEY-----/g,'').replace(/-----END PRIVATE KEY-----/g,'').replace(/\s/g,'');
  let raw:string;try{raw=atob(keyText);}catch{throw new Error('google_service_account_key_invalid');}
  const keyBytes=Uint8Array.from(raw,c=>c.charCodeAt(0));
  let key:CryptoKey;try{key=await crypto.subtle.importKey('pkcs8',keyBytes,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['sign']);}catch{throw new Error('google_service_account_key_invalid');}
