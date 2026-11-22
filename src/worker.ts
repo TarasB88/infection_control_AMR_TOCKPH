@@ -173,6 +173,17 @@ type AuthResult = { user: AuthenticatedUser; error?: never } | { user?: never; e
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 const PASSWORD_ITERATIONS = 310000;
 const COOKIE_NAME = '__Host-ic_session';
+const authSchemaReady = async (env: WorkerEnv): Promise<boolean> => {
+  if (!env.DB) return false;
+  const tables = await env.DB.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('user_profiles','user_sessions','login_attempts')",
+  ).all<{ name: string }>();
+  const tableNames = new Set((tables.results ?? []).map(row => row.name));
+  if (!['user_profiles', 'user_sessions', 'login_attempts'].every(name => tableNames.has(name))) return false;
+  const columns = await env.DB.prepare('PRAGMA table_info(user_profiles)').all<{ name: string }>();
+  const columnNames = new Set((columns.results ?? []).map(column => column.name));
+  return columnNames.has('password_salt') && columnNames.has('password_hash');
+};
 const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
@@ -247,29 +258,50 @@ const handleLogin = async (request:Request, env:WorkerEnv):Promise<Response> => 
   try { body=await request.json() as typeof body; } catch { return json({error:'invalid_json'},400); }
   const email=text(body.email).toLowerCase(), password=String(body.password??'');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length>128) return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
+  const diagnosticId = randomToken(12);
+  let loginStage = 'check_auth_schema';
   try {
+    if (!await authSchemaReady(env)) {
+      return json({ error: 'auth_schema_not_ready', diagnosticId,
+        message: 'База даних авторизації не готова. Потрібно застосувати D1-міграції 0002_user_profiles.sql і 0003_password_sessions.sql.' }, 503);
+    }
+    loginStage = 'cleanup_old_login_attempts';
     await env.DB.prepare("DELETE FROM login_attempts WHERE attempted_at < datetime('now','-1 day')").run();
+    loginStage = 'cleanup_expired_sessions';
     await env.DB.prepare("DELETE FROM user_sessions WHERE expires_at <= datetime('now')").run();
+    loginStage = 'check_rate_limit';
     const attempts=await env.DB.prepare("SELECT COUNT(*) AS total FROM login_attempts WHERE email=? AND attempted_at > datetime('now','-15 minutes')").bind(email).first<{total:number}>();
     if ((attempts?.total??0)>=8) return json({error:'login_rate_limited',message:'Забагато невдалих спроб. Спробуйте через 15 хвилин.'},429);
+    loginStage = 'load_user_profile';
     const profile=await env.DB.prepare('SELECT id,email,full_name,role,is_active,all_facilities,password_salt,password_hash FROM user_profiles WHERE email=? COLLATE NOCASE').bind(email)
       .first<UserProfileRow & {password_salt:string|null;password_hash:string|null}>();
     const salt=profile?.password_salt || '00000000000000000000000000000000';
+    loginStage = 'verify_password';
     const candidate=await hashPassword(password,salt);
     if (!profile || profile.is_active!==1 || !profile.password_hash || !constantTimeEqual(candidate,profile.password_hash)) {
+      loginStage = 'record_failed_login_attempt';
       await env.DB.prepare('INSERT INTO login_attempts (email,attempted_at) VALUES (?,CURRENT_TIMESTAMP)').bind(email).run();
       return json({error:'invalid_credentials',message:'Неправильна електронна пошта або пароль.'},401);
     }
+    loginStage = 'clear_failed_login_attempts';
     await env.DB.prepare('DELETE FROM login_attempts WHERE email=?').bind(email).run();
     const token=randomToken(), csrfToken=randomToken(24), sessionId=crypto.randomUUID();
+    loginStage = 'create_session';
     await env.DB.prepare("INSERT INTO user_sessions (id,user_id,token_hash,csrf_token,expires_at) VALUES (?,?,?,?,datetime('now',?))")
       .bind(sessionId,profile.id,await sha256(token),csrfToken,`+${SESSION_TTL_SECONDS} seconds`).run();
+    loginStage = 'write_login_audit';
     await env.DB.prepare('INSERT INTO audit_log (id,actor_id,action,entity_type,entity_id,details_json) VALUES (?,?,?,?,?,?)')
       .bind(crypto.randomUUID(),profile.id,'login','user_session',sessionId,JSON.stringify({email})).run();
     return new Response(JSON.stringify({user:publicUser({...profile,facilityCodes:[]})}),{status:200,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','set-cookie':sessionCookie(token,SESSION_TTL_SECONDS),'x-content-type-options':'nosniff'}});
   } catch (error) {
-    console.error('auth_login_failed', error);
-    return json({error:'login_failed',message:'Помилка сервера під час входу. Перевірте журнал Worker.'},500);
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error('auth_login_failed', { diagnosticId, stage: loginStage, error: detail });
+    if (/no such table|no such column/i.test(detail)) {
+      return json({ error: 'auth_schema_not_ready', diagnosticId,
+        message: 'Схема бази даних авторизації неповна. Перевірте та застосуйте D1-міграції 0002 і 0003.' }, 503);
+    }
+    return json({ error: 'login_failed', diagnosticId,
+      message: 'Помилка сервера під час входу. Код діагностики: ' + diagnosticId + '. Перевірте журнал Worker за цим кодом.' }, 500);
   }
 };
 const handleLogout = async (request:Request, env:WorkerEnv):Promise<Response> => {
@@ -565,11 +597,21 @@ export default {
 
     if (url.pathname === '/api/auth/status' && request.method === 'GET') {
       if (!env.DB) return json({ error: 'database_unavailable' }, 503);
-      const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles').first<{ total: number }>();
-      return json({
-        setupRequired: (count?.total ?? 0) === 0,
-        setupTokenConfigured: Boolean(env.INITIAL_ADMIN_SETUP_TOKEN),
-      });
+      try {
+        if (!await authSchemaReady(env)) {
+          return json({ error: 'auth_schema_not_ready',
+            message: 'Схема авторизації D1 не готова. Потрібно застосувати міграції 0002_user_profiles.sql і 0003_password_sessions.sql.' }, 503);
+        }
+        const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM user_profiles').first<{ total: number }>();
+        return json({
+          setupRequired: (count?.total ?? 0) === 0,
+          setupTokenConfigured: Boolean(env.INITIAL_ADMIN_SETUP_TOKEN),
+          authenticationSchema: 'ready',
+        });
+      } catch (error) {
+        console.error('auth_status_failed', error);
+        return json({ error: 'auth_status_failed', message: 'Не вдалося перевірити схему авторизації D1. Перевірте журнал Worker.' }, 500);
+      }
     }
     if (url.pathname === '/api/auth/setup') {
       return handleInitialSetup(request, env);
