@@ -130,7 +130,7 @@ async function handle(req:Request,e:Env):Promise<Response>{
   if(!['admin','operator','analyst'].includes(String(b.role)))return reply({error:'Невідома роль.'},400);
   const t=await readTable(e,'Users');if(!t.headers.length)return reply({error:'У Users відсутній рядок заголовків.'},400);
   if(t.rows.some(r=>String(r.Username||'').toLowerCase()===username))return reply({error:'Такий логін уже існує.'},409);
-  const now=new Date().toISOString(),r:Record<string,string>={User_ID:crypto.randomUUID(),Username:username,Email:String(b.email||''),Display_Name:String(b.displayName||username),Password_Hash:await passwordHash(pass),Role:b.role,All_Facilities:b.allFacilities?'TRUE':'FALSE',Facility_Codes:(b.facilityCodes||[]).join(';'),Is_Active:b.isActive===false?'FALSE':'TRUE',Must_Change_Password:'TRUE',Created_At:now,Updated_At:now,Last_Login_At:'',Notes:''};
+  const now=new Date().toISOString(),r:Record<string,string>={User_ID:crypto.randomUUID(),Username:username,Email:String(b.email||''),Display_Name:String(b.displayName||username),Password_Hash:await passwordHash(pass),Role:String(b.role),All_Facilities:b.allFacilities?'TRUE':'FALSE',Facility_Codes:(b.facilityCodes||[]).join(';'),Is_Active:b.isActive===false?'FALSE':'TRUE',Must_Change_Password:'TRUE',Created_At:now,Updated_At:now,Last_Login_At:'',Notes:''};
   await append(e,'Users',t.headers,[t.headers.map(h=>r[h]??'')]);return reply({ok:true},201);
  }
  return reply({error:'Маршрут не знайдено.'},404);
