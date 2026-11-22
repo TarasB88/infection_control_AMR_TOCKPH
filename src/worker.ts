@@ -111,80 +111,8 @@ async function handle(req:Request,e:Env):Promise<Response>{
    await append(e,'Users',table.headers,[table.headers.map(h=>r[h]||'')]);table.rows.push(r);
   }
   const r=table.rows.find(x=>String(x.Username||'').trim().toLowerCase()===name);
-  const canVerify=!!r&&yes(r.Is_Active)&&String(r.Password_Hash||'').startsWith('pbkdf2-sha256r.Last_Login_At=new Date().toISOString();await update(e,'Users',idx,table.headers,table.headers.map(h=>r[h]??''));
-  const u=toUser(r);return reply({user:u},200,{'Set-Cookie':cookie(await makeSession(u,e))});
- }
- if(p==='/api/auth/logout'&&req.method==='POST')return reply({ok:true},200,{'Set-Cookie':cookie('',0)});
- if(p==='/api/auth/me'&&req.method==='GET'){const u=await liveSession(req,e);return u?reply({user:u}):reply({user:null},401);}
- const u=await liveSession(req,e);if(!u)return reply({error:'Потрібно увійти в систему або обліковий запис деактивовано.'},401);
- if(u.mustChangePassword&&p!=='/api/auth/change-password')return reply({error:'Перед продовженням роботи змініть початковий пароль.'},403);
- if(p==='/api/auth/change-password'&&req.method==='POST'){
-  const b=await req.json() as {currentPassword?:string;newPassword?:string},current=String(b.currentPassword||''),next=String(b.newPassword||'');
-  if(next.length<12||next.length>128)return reply({error:'Новий пароль має містити від 12 до 128 символів.'},400);
-  const t=await readTable(e,'Users'),r=t.rows.find(x=>String(x.Username||'').toLowerCase()===u.username.toLowerCase());
-  if(!r||!await passwordOK(current,r.Password_Hash||''))return reply({error:'Поточний пароль неправильний.'},401);
-  r.Password_Hash=await passwordHash(next);r.Must_Change_Password='FALSE';r.Updated_At=new Date().toISOString();
-  await update(e,'Users',Number(r.__rowNumber)||t.rows.indexOf(r)+2,t.headers,t.headers.map(h=>r[h]??''));
-  const updated={...u,mustChangePassword:false};return reply({user:updated},200,{'Set-Cookie':cookie(await makeSession(updated,e))});
- }
-
- const m=p.match(/^\/api\/sheets\/([A-Za-z_]+)$/);
- if(m){
-  const s=m[1] as Sheet;if(!SHEETS.includes(s))return reply({error:'Невідомий аркуш.'},404);
-  if(s==='Users'&&u.role!=='admin')return reply({error:'Недостатньо прав.'},403);
-  if(req.method==='GET'){
-   const t=await readTable(e,s),headers=t.headers.filter(h=>h!=='Password_Hash'&&h!=='Password'),rows=s==='Users'?t.rows.map(r=>{const x={...r};delete x.Password_Hash;delete x.Password;delete x.__rowNumber;return x;}):scoped(s,t.rows,u).map(r=>{const x={...r};delete x.__rowNumber;return x;});
-   return reply({headers,rows});
-  }
-  if(req.method==='POST'){
-   if(s==='Users')return reply({error:'Користувачів можна змінювати лише через адміністративний API.'},403);
-   if(!mayWrite(u,s))return reply({error:'Недостатньо прав для запису до цього аркуша.'},403);
-   const b=await req.json() as {headers?:string[];rows?:unknown[][]};
-   if(!Array.isArray(b.headers)||!Array.isArray(b.rows)||b.headers.length===0)return reply({error:'Некоректний формат запису.'},400);
-   if(b.headers.some(h=>typeof h!=='string'||!h.trim())||new Set(b.headers.map(h=>h.toLowerCase())).size!==b.headers.length)return reply({error:'Заголовки колонок некоректні.'},400);
-   if(b.headers.includes('Password')||b.headers.includes('Password_Hash'))return reply({error:'Пароль можна змінювати лише через адміністративний API.'},400);
-   if(b.rows.length>1000||b.rows.some(row=>!Array.isArray(row)||row.length!==b.headers!.length))return reply({error:'Кількість значень у рядках не відповідає схемі аркуша.'},400);
-   const existing=await readTable(e,s);
-   let headers=existing.headers;
-   if(!headers.length){
-    if(u.role!=='admin'||b.rows.length!==1||b.rows[0].some((value,index)=>String(value??'')!==b.headers![index]))return reply({error:'Порожній аркуш може ініціалізувати лише адміністратор рядком заголовків.'},403);
-    headers=b.headers;
-   }else if(b.headers.length!==headers.length||b.headers.some((header,index)=>header!==headers[index])){
-    return reply({error:'Схема колонок не збігається із заголовками аркуша. Оновіть дані й повторіть спробу.'},400);
-   }
-   if(u.role!=='admin'){
-    const scopeColumn=s==='AST_Data'||s==='WGS_Staging'?'Hospital_ID':'Facility_ID';
-    const scopeIndex=headers.indexOf(scopeColumn);
-    if(scopeIndex<0)return reply({error:'Для цього аркуша не налаштовано поле контролю доступу до закладу.'},403);
-    for(const row of b.rows){
-     if(!inScope(u,String(row[scopeIndex]??'').trim()))return reply({error:'Запис поза межами дозволених закладів.'},403);
-    }
-   }
-   await append(e,s,headers,b.rows);return reply({ok:true});
-  }
- }
- if(p==='/api/admin/users'&&req.method==='POST'){
-  if(u.role!=='admin')return reply({error:'Лише адміністратор може створювати користувачів.'},403);
-  const b=await req.json() as {username?:string;password?:string;email?:string;displayName?:string;role?:Role;allFacilities?:boolean;facilityCodes?:string[];isActive?:boolean};
-  const username=String(b.username||'').trim().toLowerCase(),pass=String(b.password||'');
-  if(!/^[a-z0-9._-]{3,40}$/.test(username))return reply({error:'Логін має містити 3–40 символів латиниці, цифр, крапки, дефіса або підкреслення.'},400);
-  if(pass.length<12||pass.length>128)return reply({error:'Початковий пароль має містити від 12 до 128 символів.'},400);
-  if(!['admin','operator','analyst'].includes(String(b.role)))return reply({error:'Невідома роль.'},400);
-  const t=await readTable(e,'Users');if(!t.headers.length)return reply({error:'У Users відсутній рядок заголовків.'},400);
-  if(t.rows.some(r=>String(r.Username||'').toLowerCase()===username))return reply({error:'Такий логін уже існує.'},409);
-  const now=new Date().toISOString(),r:Record<string,string>={User_ID:crypto.randomUUID(),Username:username,Email:String(b.email||''),Display_Name:String(b.displayName||username),Password_Hash:await passwordHash(pass),Role:String(b.role),All_Facilities:b.allFacilities?'TRUE':'FALSE',Facility_Codes:(b.facilityCodes||[]).join(';'),Is_Active:b.isActive===false?'FALSE':'TRUE',Must_Change_Password:'TRUE',Created_At:now,Updated_At:now,Last_Login_At:'',Notes:''};
-  await append(e,'Users',t.headers,[t.headers.map(h=>r[h]??'')]);return reply({ok:true},201);
- }
- return reply({error:'Маршрут не знайдено.'},404);
-}
-export default {async fetch(req:Request,e:Env){
- const url=new URL(req.url);if(url.pathname.startsWith('/api/')){
-  if(req.method!=='GET'&&req.headers.get('Origin')!==url.origin)return reply({error:'Недійсне джерело запиту.'},403);
-  if(!e.SESSION_SECRET||te.encode(e.SESSION_SECRET).length<32)return reply({error:'Серверна авторизація не налаштована належним чином.'},503);
-  try{return await handle(req,e);}catch(err){console.error('IPC API request failed',err instanceof Error?err.message:'unknown error');return reply({error:'Внутрішня помилка сервера.'},500);}
- }return e.ASSETS.fetch(req);
-}};
-);
+  const hashPrefix='pbkdf2-sha256'+String.fromCharCode(36);
+  const canVerify=!!r&&yes(r.Is_Active)&&String(r.Password_Hash||'').startsWith(hashPrefix);
   const passwordValid=canVerify?await passwordOK(pass,r!.Password_Hash||''):(await passwordHash(pass),false);
   if(!r||!yes(r.Is_Active)||!passwordValid)return reply({error:'Неправильний логін або пароль, або обліковий запис неактивний.'},401);
   const idx=Number(r.__rowNumber)||table.rows.indexOf(r)+2;r.Last_Login_At=new Date().toISOString();await update(e,'Users',idx,table.headers,table.headers.map(h=>r[h]??''));
