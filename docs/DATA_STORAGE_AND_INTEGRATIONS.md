@@ -32,13 +32,15 @@ R2 is not currently connected. It may later store source workbooks, generated ex
 
 ### Google Sheets
 
-Facility source spreadsheets remain private and are read only by the server-side Google Apps Script bridge:
+Google Sheets are accessed directly by the Cloudflare Worker through the official Google Sheets API:
 
-`Private source spreadsheets → Apps Script bridge → Cloudflare Worker → authenticated facility directory`
+`Private Google Sheets → Google Sheets API → Cloudflare Worker → authenticated application`
 
-The bridge reads the two allow-listed source tabs by spreadsheet ID and GID, validates their headers, matches facilities by EDRPOU, merges monitoring attributes and returns the merged records to the Worker. The Worker requires an authenticated session and returns only organizational fields; director names, email addresses and phone numbers are filtered out before the API response.
+No Google Apps Script project, Web App, `doPost()` endpoint, public CSV export or bridge token is required. The Worker creates a short-lived OAuth access token from a Google service-account key, reads the two allow-listed source tabs by spreadsheet ID and GID, validates headers, matches facilities by EDRPOU and merges monitoring attributes. The API response exposes organizational fields only; director names, email addresses and phone numbers are never returned.
 
-Do not publish the source tabs or workbooks to the web. The bridge token and endpoint are server-side Worker secrets and must never be placed in browser code, public sheets, source control or chat. The existing protected administrative bridge also supports sheet inspection and controlled synchronization. The `Users` worksheet is excluded from generic read and write operations.
+The service account must have Viewer access to both source workbooks and Editor access to the target workbook `1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc` because the administrator can synchronize the merged facility directory into its `Facilities` tab. The service-account email and private key are Cloudflare Worker secrets named `GOOGLE_SERVICE_ACCOUNT_EMAIL` and `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`; never commit or share the private key. The `Users` worksheet is excluded from generic read and write operations.
+
+Facility preview and manual synchronization, sheet inspection, and AST import use direct Sheets API calls. Apps Script installable triggers are not used; automatic synchronization is not enabled in this direct-API implementation.
 
 D1 remains the system of record for user accounts, sessions and persisted AMR data. AST import and manual entry continue through authenticated Worker endpoints.
 ## Privacy and governance
