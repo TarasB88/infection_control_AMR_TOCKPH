@@ -178,7 +178,16 @@ const targetRows=async(env:WorkerEnv,sheet:string)=>{
 const inspectSheets=async(env:WorkerEnv)=>{
  const meta=await sheetMeta(env,GOOGLE_TARGET_SPREADSHEET_ID);
  const visible=meta.filter(s=>GOOGLE_ALLOWED_SHEETS.includes(s.properties.title));
- const sheets=await Promise.all(visible.map(async s=>{const data=await targetRows(env,s.properties.title);return{name:s.properties.title,rows:data.rowCount,columns:data.headers.length,headers:data.headers};}));
+ const sheets=await Promise.all(visible.map(async s=>{
+  const tab=quoteTab(s.properties.title);
+  const [headerValues,firstColumn]=await Promise.all([
+   readValues(env,GOOGLE_TARGET_SPREADSHEET_ID,tab+'!1:1'),
+   readValues(env,GOOGLE_TARGET_SPREADSHEET_ID,tab+'!A2:A'),
+  ]);
+  const headers=(headerValues[0]||[]).map(text);
+  const rows=firstColumn.filter(row=>text(row[0])).length;
+  return{name:s.properties.title,rows,columns:headers.length,headers};
+ }));
  return{spreadsheetId:GOOGLE_TARGET_SPREADSHEET_ID,sheets};
 };
 const safeCell=(value:string)=>/^[=+@-]/.test(value)&&!Number.isFinite(Number(value))?"'"+value:value;
@@ -622,7 +631,7 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'google_sheets_connection_failed';
-      const status = message === 'google_sheets_not_configured' ? 503 : 502;
+      const status = ['google_sheets_not_configured','google_service_account_not_configured'].includes(message) ? 503 : 502;
       return json({ configured: status !== 503, connected: false, error: message }, status);
     }
   }
