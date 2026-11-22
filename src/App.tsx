@@ -167,35 +167,9 @@ export default function App(){
    const data=await readApiJson<any>(response);
    if(!response.ok||data.ok!==true)throw new Error(data.message||data.error||'HTTP '+response.status);
    setFacilitySyncPreview(data);
-   setFacilityAutoSync(data.autoSync||facilityAutoSync);
    setGoogleSheetsStatus('Оновлено: додано '+(data.inserted??0)+', змінено '+(data.updated??0)+', без змін '+(data.unchanged??0)+'.');
    setNotice('Реєстр Facilities оновлено з актуальних даних двох джерел.');
   }catch(error){setGoogleSheetsStatus('Оновлення не виконано: '+(error instanceof Error?error.message:String(error)));}
-  finally{setGoogleSheetsBusy(false);}
- };
- const manageFacilitiesAutoSync=async(enable:boolean)=>{
-  if(enable&&!window.confirm('Увімкнути автоматичну синхронізацію? Скрипт оновлюватиме Facilities після ручних змін у кожному з двох джерел, а також виконуватиме резервну перевірку щогодини.'))return;
-  if(!enable&&!window.confirm('Вимкнути автоматичну синхронізацію Facilities?'))return;
-  setGoogleSheetsBusy(true);setGoogleSheetsStatus(enable?'Налаштування автоматичного оновлення…':'Вимкнення автоматичного оновлення…');
-  try{
-   const action=enable?'enableFacilitiesAutoSync':'disableFacilitiesAutoSync';
-   const response=await fetch('/api/admin/google-sheets',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({action})});
-   const data=await readApiJson<any>(response);
-   if(!response.ok||data.ok!==true)throw new Error(data.message||data.error||'HTTP '+response.status);
-   setFacilityAutoSync(data.autoSync||null);
-   setGoogleSheetsStatus(enable?'Автоматичне оновлення ввімкнено. Активовано тригери редагування та щогодинну резервну перевірку.':'Автоматичне оновлення вимкнено.');
-  }catch(error){setGoogleSheetsStatus('Не вдалося змінити режим автооновлення: '+(error instanceof Error?error.message:String(error)));}
-  finally{setGoogleSheetsBusy(false);}
- };
- const checkFacilitiesAutoSync=async()=>{
-  setGoogleSheetsBusy(true);
-  try{
-   const response=await fetch('/api/admin/google-sheets',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({action:'getFacilitiesSyncStatus'})});
-   const data=await readApiJson<any>(response);
-   if(!response.ok||data.ok!==true)throw new Error(data.message||data.error||'HTTP '+response.status);
-   setFacilityAutoSync(data.autoSync||null);
-   setGoogleSheetsStatus(data.autoSync?.enabled?'Автооновлення активне. Остання успішна синхронізація: '+(data.autoSync.lastSuccessAt||'ще не виконувалась')+'.':'Автоматичне оновлення вимкнене.');
-  }catch(error){setGoogleSheetsStatus('Не вдалося отримати стан автооновлення: '+(error instanceof Error?error.message:String(error)));}
   finally{setGoogleSheetsBusy(false);}
  };
  const submitLogin=async(event:FormEvent)=>{
