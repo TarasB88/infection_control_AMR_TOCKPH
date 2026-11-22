@@ -211,8 +211,29 @@ export default function App(){
  const logout=async()=>{
   try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin',headers:{'x-csrf-token':csrfToken}});}finally{window.location.reload();}
  };
- // TEMPORARY TEST MODE: bypass sign-in with a read-only guest profile. Re-enable the authenticated initialization when production access control is ready.
- useEffect(()=>{let alive=true;const initialize=async()=>{setUser({id:'demo-readonly',email:'demo@local',fullName:'Гостьовий перегляд',role:'analyst',isActive:true,allFacilities:true,facilityCodes:[]});setNotice('Тимчасовий тестовий режим · лише перегляд.');try{await Promise.all([loadFromD1(false),loadFacilities()]);}finally{if(alive)setAuthLoading(false);}};void initialize();return()=>{alive=false;};},[]);
+ // Restore the real session before loading any protected AMR data.
+ useEffect(()=>{let alive=true;const initialize=async()=>{
+  try{
+   const statusResponse=await fetch('/api/auth/status',{credentials:'same-origin',headers:{accept:'application/json'}});
+   const status=await readApiJson<{setupRequired?:boolean;setupTokenConfigured?:boolean;message?:string}>(statusResponse);
+   if(!statusResponse.ok)throw new Error(status.message||'Не вдалося перевірити стан авторизації.');
+   if(!alive)return;
+   setSetupRequired(Boolean(status.setupRequired));
+   setSetupTokenConfigured(Boolean(status.setupTokenConfigured));
+   const meResponse=await fetch('/api/auth/me',{credentials:'same-origin',headers:{accept:'application/json'}});
+   if(meResponse.status===401){
+    if(!status.setupRequired)setAuthError('Увійдіть до системи для доступу до даних.');
+    return;
+   }
+   const me=await readApiJson<{user:{id:string;email:string;fullName:string;role:'admin'|'operator'|'analyst';isActive:boolean;allFacilities:boolean;facilityCodes:string[]};csrfToken:string;message?:string}>(meResponse);
+   if(!meResponse.ok)throw new Error(me.message||'Не вдалося перевірити сеанс користувача.');
+   if(!alive)return;
+   setUser(me.user);setCsrfToken(me.csrfToken);
+   setNotice('Авторизовано: '+me.user.fullName);
+   await Promise.all([loadFromD1(false),loadFacilities()]);
+  }catch(error){if(alive)setAuthError(error instanceof Error?error.message:'Помилка ініціалізації авторизації.');}
+  finally{if(alive)setAuthLoading(false);}
+ };void initialize();return()=>{alive=false;};},[]);
  const setManualField=(key:keyof Row,value:string)=>setManualRow(current=>({...current,[key]:value}));
  if(authLoading)return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>IPC & AMR Monitoring</h1><p>Перевірка авторизації та профілю користувача…</p></div></div>;
  if(!user)return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>IPC & AMR Monitoring</h1><p>{authError||'Захищений вхід до інформаційно-аналітичної системи.'}</p>{setupRequired?<form onSubmit={submitSetup} className="authform"><h2>Початкове налаштування</h2><label>Одноразовий ключ налаштування<input value={setupToken} onChange={e=>setSetupToken(e.target.value)} type="password" required autoComplete="off"/></label><label>ПІБ адміністратора<input value={setupName} onChange={e=>setSetupName(e.target.value)} required minLength={3}/></label><label>Email<input type="email" value={setupEmail} onChange={e=>setSetupEmail(e.target.value)} required autoComplete="username"/></label><label>Пароль (не менше 12 символів)<input type="password" value={setupPassword} onChange={e=>setSetupPassword(e.target.value)} required minLength={12} autoComplete="new-password"/></label><button className="primary" type="submit" disabled={!setupTokenConfigured}>Створити адміністратора</button></form>:<form onSubmit={submitLogin} className="authform"><h2>Вхід до системи</h2><label>Електронна пошта<input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} required autoComplete="username"/></label><label>Пароль<input type="password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} required autoComplete="current-password"/></label><button className="primary" type="submit">Увійти</button></form>}<small>Доступ надається адміністратором. Сеанс автоматично завершується через 8 годин.</small></div></div>;
