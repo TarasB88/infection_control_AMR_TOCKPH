@@ -155,8 +155,10 @@ export default function App(){
     setPasswordSaving(true);setAuthError('');
     try{
       const updated=await changePassword(currentPassword,newPassword);
-      setUser(previous=>previous?{...previous,mustChangePassword:updated.mustChangePassword}:previous);
+      const nextUser=user?{...user,mustChangePassword:updated.mustChangePassword}:null;
+      setUser(nextUser);
       setCurrentPassword('');setNewPassword('');
+      if(nextUser)await ensureWorkbook(nextUser);
       setNotice('Пароль успішно змінено.');
     }catch(error){setAuthError(error instanceof Error?error.message:'Не вдалося змінити пароль.');}
     finally{setPasswordSaving(false);}
