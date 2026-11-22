@@ -1,52 +1,57 @@
-# Direct Google Sheets API setup
+# Google Sheets integration
 
-This integration uses the Cloudflare Worker and Google Sheets API directly. No Apps Script project, Apps Script Web App, published CSV, or bridge token is used.
+The dashboard uses two server-side connection patterns. No Apps Script project, Apps Script Web App, or Apps Script trigger is used.
 
-## 1. Create a Google service account
+## 1. Facility directory sources — direct XLSX export
 
-1. Open Google Cloud Console and select or create a project.
-2. Enable **Google Sheets API** for that project.
-3. Create a service account dedicated to this dashboard.
-4. Create a JSON key for the service account and download it securely.
-5. From the JSON file, use only `client_email` and `private_key` for the Cloudflare secrets below. Do not commit the JSON file or send the private key in chat.
+The two facility source tabs are fetched in the same way as the pixel-perfect-picture-378 project:
 
-## 2. Share the spreadsheets with the service account
+`https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/export?format=xlsx&gid=SHEET_GID`
 
-Share each workbook with the exact service-account `client_email`:
+The Cloudflare Worker downloads the XLSX file server-side and parses it with the existing `xlsx` package. This avoids browser CORS restrictions and does not require a service account for these two read-only source tabs.
+
+Configured sources:
+
+| Source | Spreadsheet ID | Sheet GID |
+| --- | --- | ---: |
+| Facility registry | `10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew` | `0` |
+| Facility monitoring | `12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ` | `933221082` |
+
+**Access and privacy requirement:** Google's export URL works only when the spreadsheet is accessible to the Worker without an interactive login (for example, link-view access). Link-view access is granted at the workbook level, not just to the selected GID. Therefore, do not enable link-view access on a workbook containing personal contact details, patient-level data, credentials, or other non-public tabs. If a source workbook contains such material, create a separate sanitized workbook containing only the fields needed for the facility directory, then update the spreadsheet ID/GID constants in `src/worker.ts` to those sanitized sources.
+
+The Worker returns only the mapped organizational fields. It does not return director names, emails, or phone numbers.
+
+## 2. IPC/AMR target workbook — private Google Sheets API
+
+The target workbook remains private because it contains operational data, including the `AST_Data` tab and potentially patient identifiers. It is accessed server-side through the Google Sheets API using a service account.
 
 | Workbook | Spreadsheet ID | Permission |
 | --- | --- | --- |
-| Facility registry source | `10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew` | Viewer |
-| Facility monitoring source | `12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ` | Viewer |
 | IPC/AMR target workbook | `1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc` | Editor |
 
-Keep all workbooks private. Do not enable link sharing or publish tabs as CSV.
+Create a dedicated Google service account, enable Google Sheets API, and share only the target workbook with its `client_email`. Add these encrypted Cloudflare Worker secrets:
 
-## 3. Add Cloudflare Worker secrets
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+- `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
 
-In Cloudflare Dashboard, open **Workers & Pages → infection-control-amr-tockph → Settings → Variables and Secrets**. Add these as encrypted secrets:
+Do not commit the service-account JSON key or send the private key in chat. The `Users` tab is excluded from generic reads.
 
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL`: the service account's `client_email` value.
-- `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`: the complete `private_key` value, including the PEM BEGIN/END lines.
+The private target workbook is intentionally not made public. A public XLSX export of the whole target workbook could expose AST patient identifiers and other restricted tabs.
 
-Do not add these values as plain-text variables, commit them to GitHub, or expose them in frontend code. The Worker signs a short-lived OAuth assertion server-side and obtains a Google access token with the Sheets scope.
+## 3. Verify
 
-## 4. Verify the connection
+After deployment:
 
-After the Worker with this integration is deployed:
+1. Sign in as an administrator.
+2. Open **Імпорт та контроль якості даних** and select **Перевірити з’єднання**. This checks the private target workbook and lists allow-listed tabs.
+3. Open **Реєстр закладів**. The Worker fetches the two source tabs using direct XLSX export.
+4. Use **Попередній перегляд змін** before **Оновити зараз → Facilities**. The latter writes mapped non-empty values into the private target workbook and does not overwrite formula cells.
 
-1. Sign in to the dashboard as an administrator.
-2. Open **Імпорт та контроль якості даних**.
-3. Select **Перевірити з’єднання**. The response should list the allow-listed target tabs and their headers.
-4. Open **Реєстр закладів**. The directory should load from the two private source tabs.
-5. Use **Попередній перегляд змін** before **Оновити зараз → Facilities**. The latter writes only mapped, non-empty fields and does not overwrite formula cells.
+AST data is read from the private `AST_Data` tab and passes through authenticated validation and D1 persistence, including HMAC pseudonymization of patient identifiers.
 
-AST import from `AST_Data` also reads directly through the Sheets API and continues to pass through the authenticated Worker validation and D1 persistence path.
+## 4. Limitations
 
-## Notes
-
-- The service account needs Viewer on source workbooks and Editor on the target workbook.
-- The `Users` tab is deliberately excluded from generic reads.
-- Facility source rows containing director, email, and phone columns are not returned by the facility endpoint.
-- Facility auto-sync triggers are not part of this direct-API implementation. Use the manual preview and synchronization controls.
-- If the dashboard reports `google_service_account_not_configured`, one or both Cloudflare secrets are missing. If Google returns 403, check API enablement and workbook sharing permissions.
+- Direct XLSX export is read-only. It cannot write back to Google Sheets.
+- Facility synchronization writes to the private target workbook through the Google Sheets API.
+- Automatic scheduled sync is not implemented; use the manual preview and synchronization controls.
+- If a source export returns HTTP 403/404 or an HTML login page, check its sharing settings or replace it with a sanitized, link-view export workbook.
