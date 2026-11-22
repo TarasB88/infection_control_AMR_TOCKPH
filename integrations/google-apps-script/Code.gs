@@ -378,10 +378,25 @@ function buildFacilitiesSyncReport_(targetBook, commit) {
   });
 
   const eligible = records.filter(record => !duplicateTargetSet.has(record.edrpou));
-  let newCount = 0, updateCount = 0;
+  let newCount = 0, updateCount = 0, unchangedCount = 0;
   eligible.forEach(record => {
-    if (existingIndex[record.edrpou] == null) newCount++;
-    else updateCount++;
+    const existingRowIndex = existingIndex[record.edrpou];
+    if (existingRowIndex == null) {
+      newCount++;
+      return;
+    }
+    const currentRow = existingValues[existingRowIndex];
+    const formulaRow = existingFormulas[existingRowIndex];
+    const hasChanges = headers.some((header, columnIndex) => {
+      const field = fieldByColumn[columnIndex];
+      if (!field) return false;
+      const incoming = String(record[field] || '').trim();
+      if (!incoming || formulaRow[columnIndex]) return false;
+      const safeValue = safeFacilityCell_(incoming);
+      return String(currentRow[columnIndex] == null ? '' : currentRow[columnIndex]) !== safeValue;
+    });
+    if (hasChanges) updateCount++;
+    else unchangedCount++;
   });
   const unmappedHeaders = headers.filter((header, index) => !fieldByColumn[index]);
   const report = {
@@ -397,6 +412,7 @@ function buildFacilitiesSyncReport_(targetBook, commit) {
       duplicateTargetIds: duplicateTargetIds.length,
       newRecords: newCount,
       recordsToUpdate: updateCount,
+      recordsUnchanged: unchangedCount,
       skippedForAmbiguousTarget: duplicateTargetIds.length
     },
     sample: eligible.slice(0, 5).map(record => ({ edrpou: record.edrpou, name: record.name, oblast: record.oblast, hromada: record.hromada, care_level: record.care_level, network_status: record.network_status }))
@@ -498,7 +514,7 @@ function installFacilitiesAutoSync_() {
 /**
  * Run once from the Apps Script editor if Google asks the owner to authorize
  * trigger-management scopes before the dashboard can enable auto-refresh.
- * This enables the same edit and hourly triggers as the dashboard control.
+ * This enables the same edit, change, and hourly triggers as the dashboard control.
  */
 function setupFacilitiesAutoSync() {
   return installFacilitiesAutoSync_();
