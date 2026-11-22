@@ -155,7 +155,7 @@ export default function App(){
     try{
       const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
       for(const name of GOOGLE_SHEET_TABS){
-        if(name==='Users'&&user.role!=='admin')continue;
+        if(name==='Users'&&user?.role!=='admin')continue;
         const table=await readSheetTable(name);
         loaded[name]=table;
       }
