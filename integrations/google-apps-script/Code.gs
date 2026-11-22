@@ -151,7 +151,7 @@ function doPost(e) {
         const values = headers.map(h => {
           const value = Object.prototype.hasOwnProperty.call(record, h) ? record[h] : '';
           // Prevent untrusted text from being interpreted as a spreadsheet formula.
-          return typeof value === 'string' && /^[=+@]/.test(value) ? "'" + value : value;
+          return typeof value === 'string' && /^[=+@-]/.test(value) && !Number.isFinite(Number(value)) ? "'" + value : value;
         });
         const rowNumber = index.get(key);
         if (rowNumber) {
