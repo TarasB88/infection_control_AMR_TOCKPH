@@ -197,7 +197,7 @@ function doPost(e) {
  * only where an incoming value is present. Unmapped columns and formulas are kept.
  */
 const FACILITY_FIELD_ALIASES_ = Object.freeze({
-  edrpou: ['єдрпоу', 'кодєдрпоу', 'єдрпоукод', 'кодзгідноєдрпоу', 'кодзакладу', 'кодзакладуєдрпоу', 'edrpou', 'hospitalid', 'facilitycode', 'externalcode'],
+  edrpou: ['єдрпоу', 'кодєдрпоу', 'єдрпоукод', 'єдрпоузоз', 'кодзаєдрпоу', 'кодзгідноєдрпоу', 'кодєдрпоузакладу', 'кодзакладу', 'кодзакладуєдрпоу', 'edrpou', 'hospitalid', 'facilitycode', 'externalcode'],
   name: ['назва', 'назвазоз', 'назвазакладу', 'повнаназва', 'повнаназвазакладу', 'найменування', 'найменуваннязакладу', 'закладохорониздоровя', 'hospitalname', 'facilityname'],
   director: ['керівник', 'пібкерівника', 'директор', 'керівникзакладу', 'director', 'manager'],
   email: ['email', 'електроннапошта', 'електроннаадреса', 'поштоваадреса', 'emailзакладу'],
@@ -222,7 +222,7 @@ function normalizeFacilityHeader_(value) {
 function facilityFieldForHeader_(header) {
   const normalized = normalizeFacilityHeader_(header);
   for (const field in FACILITY_FIELD_ALIASES_) {
-    if (FACILITY_FIELD_ALIASES_[field].some(alias => normalizeFacilityHeader_(alias) === normalized)) return field;
+    if (FACILITY_FIELD_ALIASES_[field].some(alias => { const candidate = normalizeFacilityHeader_(alias); return candidate === normalized || (candidate.length >= 4 && (normalized.indexOf(candidate) === 0 || normalized.slice(-candidate.length) === candidate)); })) return field;
   }
   return '';
 }
@@ -283,6 +283,14 @@ function mergeUniqueFacilityText_(left, right, field) {
 }
 
 function previewFacilitiesSync_(targetBook, commit) {
+  if (!commit) return buildFacilitiesSyncReport_(targetBook, false);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('write_busy_retry');
+  try { return buildFacilitiesSyncReport_(targetBook, true); }
+  finally { lock.releaseLock(); }
+}
+
+function buildFacilitiesSyncReport_(targetBook, commit) {
   const sourceA = readFacilitySource_(CONFIG.facilitySources[0]);
   const sourceB = readFacilitySource_(CONFIG.facilitySources[1]);
   const registryCounts = {};
@@ -341,16 +349,17 @@ function previewFacilitiesSync_(targetBook, commit) {
   const lastRow = target.getLastRow();
   const existingValues = lastRow > 1 ? target.getRange(2, 1, lastRow - 1, lastColumn).getValues() : [];
   const existingFormulas = lastRow > 1 ? target.getRange(2, 1, lastRow - 1, lastColumn).getFormulas() : [];
+  const existingKeyDisplay = lastRow > 1 ? target.getRange(2, keyIndex + 1, lastRow - 1, 1).getDisplayValues().map(row => row[0]) : [];
   const targetCounts = {};
-  existingValues.forEach(row => {
-    const key = normalizeEdrpou_(row[keyIndex]);
+  existingValues.forEach((row, index) => {
+    const key = normalizeEdrpou_(existingKeyDisplay[index]);
     if (key) targetCounts[key] = (targetCounts[key] || 0) + 1;
   });
   const duplicateTargetIds = Object.keys(targetCounts).filter(key => targetCounts[key] > 1);
   const duplicateTargetSet = new Set(duplicateTargetIds);
   const existingIndex = {};
   existingValues.forEach((row, index) => {
-    const key = normalizeEdrpou_(row[keyIndex]);
+    const key = normalizeEdrpou_(existingKeyDisplay[index]);
     if (key && !duplicateTargetSet.has(key)) existingIndex[key] = index;
   });
 
@@ -413,18 +422,12 @@ function previewFacilitiesSync_(targetBook, commit) {
     else unchanged++;
   });
 
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) throw new Error('write_busy_retry');
-  try {
-    if (updated > 0 && nextExisting.length) {
-      target.getRange(2, 1, nextExisting.length, headers.length).setValues(nextExisting);
-    }
-    if (newRows.length) {
-      const startRow = Math.max(2, target.getLastRow() + 1);
-      target.getRange(startRow, 1, newRows.length, headers.length).setValues(newRows);
-    }
-  } finally {
-    lock.releaseLock();
+  if (updated > 0 && nextExisting.length) {
+    target.getRange(2, 1, nextExisting.length, headers.length).setValues(nextExisting);
+  }
+  if (newRows.length) {
+    const startRow = Math.max(2, target.getLastRow() + 1);
+    target.getRange(startRow, 1, newRows.length, headers.length).setValues(newRows);
   }
   report.inserted = newRows.length;
   report.updated = updated;
