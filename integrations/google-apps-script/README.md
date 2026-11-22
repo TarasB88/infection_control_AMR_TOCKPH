@@ -1,13 +1,15 @@
 # Google Sheets integration
 
-The dashboard now connects to Google Sheets directly from the Cloudflare Worker using a Google service account and the Google Sheets API.
+The dashboard uses a **credential-free, read-only XLSX export** for the two Google Sheets that supply the facility directory.
 
-**Do not create an Apps Script project or deploy an Apps Script Web App.** The previous bridge instructions, GOOGLE_SHEETS_BRIDGE_URL, and GOOGLE_SHEETS_BRIDGE_TOKEN are obsolete.
+- No Google service account, OAuth credentials, API key, private key, Apps Script project, web app, or trigger is required.
+- The Cloudflare Worker downloads the selected source sheets through Google's XLSX export URL and merges organizational facility fields by EDRPOU.
+- The Worker never writes to Google Sheets.
+- The private IPC/AMR workbook and its restricted tabs are not accessed by this integration.
+- AST data is imported to Cloudflare D1 through authenticated Excel upload or manual entry.
 
-Follow the current setup guide:
+Follow [Google Sheets without service account or Apps Script](../../docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md) for the source IDs, GIDs, access requirements and privacy constraints.
 
-- [Direct Google Sheets API setup](../../docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md)
+**Privacy:** Google link-view permissions apply to the entire workbook. Use separate sanitized source workbooks containing only the organizational fields needed by the facility directory. Never open a workbook publicly if it contains patient data, personal contact details, credentials, or restricted worksheets.
 
-That guide covers service-account creation, private workbook sharing, Cloudflare Worker secrets, and connection verification.
-
-The source and target spreadsheets must remain private. Never commit a service-account JSON key or share its private key in chat or frontend code.
+The folder name is retained for repository history only. There is no Apps Script code or deployment step in the current implementation.
