@@ -212,7 +212,7 @@ const facilitySync=async(env:WorkerEnv,commit:boolean)=>{
   await sheetsApi(env,'/spreadsheets/'+encodeURIComponent(GOOGLE_TARGET_SPREADSHEET_ID)+'/values/'+encodeURIComponent(range)+'?valueInputOption=RAW',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({majorDimension:'ROWS',values:newRows})});}
  return{...report,inserted:newRows.length,updated:updateCount,unchanged};
 };
-const callGoogleSheetsBridge=async(env:WorkerEnv,payload:Record<string,unknown>):Promise<Record<string,unknown>>=>{
+const callGoogleSheets=async(env:WorkerEnv,payload:Record<string,unknown>):Promise<Record<string,unknown>>=>{
  const action=text(payload.action),sheet=text(payload.sheet);
  if(action==='getFacilities'){const result=await mergedFacilities(env);return{ok:true,records:result.records.map(r=>({edrpou:r.edrpou,name:r.name,address:r.address,oblast:r.oblast,district:r.district,hromada:r.hromada,settlement:r.settlement,ownership:r.ownership,care_level:r.care_level,network_status:r.network_status,monitoring_years:r.monitoring_years})),summary:result.summary};}
  if(action==='inspectSheets'){const result=await inspectSheets(env);return{ok:true,...result};}
@@ -594,7 +594,7 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
   if (actor.role !== 'admin') return json({ error: 'forbidden', message: 'Потрібна роль адміністратора.' }, 403);
   if (request.method === 'GET') {
     try {
-      const result = await callGoogleSheetsBridge(env, { action: 'inspectSheets' });
+      const result = await callGoogleSheets(env, { action: 'inspectSheets' });
       const sheets = Array.isArray(result.sheets) ? result.sheets as Array<Record<string, unknown>> : [];
       return json({
         configured: true,
@@ -634,7 +634,7 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
 
   if (['getFacilitiesSyncStatus', 'enableFacilitiesAutoSync', 'disableFacilitiesAutoSync'].includes(action)) {
     try {
-      const result = await callGoogleSheetsBridge(env, { action });
+      const result = await callGoogleSheets(env, { action });
       return json({ autoSync: result.autoSync ?? null, ok: result.ok === true, created: result.created ?? [], deleted: result.deleted ?? 0 });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'facility_auto_sync_configuration_failed';
@@ -643,7 +643,7 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
   }
   if (action === 'previewFacilities') {
     try {
-      const result = await callGoogleSheetsBridge(env, { action: 'previewFacilitiesSync' });
+      const result = await callGoogleSheets(env, { action: 'previewFacilitiesSync' });
       return json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'facility_sync_preview_failed';
@@ -653,7 +653,7 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
   if (action === 'syncFacilities') {
     if (body.confirm !== true) return json({ error: 'confirmation_required', message: 'Перед записом потрібне явне підтвердження.' }, 400);
     try {
-      const result = await callGoogleSheetsBridge(env, { action: 'syncFacilities', confirm: true });
+      const result = await callGoogleSheets(env, { action: 'syncFacilities', confirm: true });
       let auditLogged = false;
       if (env.DB) {
         try {
@@ -683,7 +683,7 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
   }
   if (action === 'syncAst') {
     try {
-      const result = await callGoogleSheetsBridge(env, { action: 'getRows', sheet: 'AST_Data' });
+      const result = await callGoogleSheets(env, { action: 'getRows', sheet: 'AST_Data' });
       if (!Array.isArray(result.rows)) return json({ error: 'invalid_bridge_response' }, 502);
       const syncRequest = new Request(request.url, {
         method: 'POST',
@@ -700,7 +700,7 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
     'Training_Events', 'Training_Facility_Stats', 'AST_Data', 'WGS_Staging', 'Dictionaries'];
   if (action !== 'read' || !allowed.includes(sheet)) return json({ error: 'sheet_not_allowed' }, 400);
   try {
-    const result = await callGoogleSheetsBridge(env, { action: 'getRows', sheet });
+    const result = await callGoogleSheets(env, { action: 'getRows', sheet });
     return json({ sheet, headers: result.headers ?? [], rows: result.rows ?? [], rowCount: result.rowCount ?? 0 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'google_sheets_read_failed';
@@ -733,7 +733,7 @@ export default {
       const authenticated = await getAuthenticatedUser(request, env);
       if (authenticated.error) return authenticated.error;
       try {
-        const result = await callGoogleSheetsBridge(env, { action: 'getFacilities' });
+        const result = await callGoogleSheets(env, { action: 'getFacilities' });
         if (!Array.isArray(result.records)) return json({ error: 'invalid_bridge_response' }, 502);
         const records = (result.records as Array<Record<string, unknown>>).map(record => ({
           edrpou: text(record.edrpou),
