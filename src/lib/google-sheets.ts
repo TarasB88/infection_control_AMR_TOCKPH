@@ -84,7 +84,14 @@ export const GOOGLE_SHEET_TABS = [
 ] as const;
 export type GoogleSheetTab = typeof GOOGLE_SHEET_TABS[number];
 
-export const googleClientConfigured = (): boolean => Boolean(configuredClientId && pickerApiKey && googleCloudProjectNumber);
+export const getMissingGoogleConfiguration = (): string[] => {
+  const missing: string[] = [];
+  if (!configuredClientId) missing.push('VITE_GOOGLE_CLIENT_ID');
+  if (!pickerApiKey) missing.push('VITE_GOOGLE_API_KEY');
+  if (!googleCloudProjectNumber) missing.push('VITE_GOOGLE_APP_ID');
+  return missing;
+};
+export const googleClientConfigured = (): boolean => getMissingGoogleConfiguration().length === 0;
 
 export const clearGoogleSession = (): void => {
   accessToken = '';
