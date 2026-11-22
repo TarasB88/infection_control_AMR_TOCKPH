@@ -21,7 +21,9 @@ const USER_HEADERS = ['Google_Sub','Email','Full_Name','Role','Is_Active','All_F
 const DEFAULT_HEADERS:Record<GoogleSheetTab,string[]> = {
   Facilities:['EDRPOU','Name','Region_Oblast','District','Territorial_Hromada','Settlement','Address','Ownership','Care_Level','Network_Status','Monitoring_Years'],
   Facility_IPC_Profile:['Facility_ID','Facility_Name','Profile_Date','VIK_Unit','VIK_Staff_Count','VIK_FTE_Count','IPC_Program','Notes'],
+  IPC_Visits:['Visit_ID','Facility_ID','Facility_Name','Planned_Month','Visit_Date','Responsible_Person','Status','Summary','Created_At'],
   IPC_Assessments:['Assessment_ID','Facility_ID','Facility_Name','Visit_Date','Criterion_Code','Criterion_Name','Result','Score','Comment','Assessed_By','Created_At'],
+  Recommendations:['Recommendation_ID','Facility_ID','Visit_ID','Description','Responsible_Person','Due_Date','Status','Completion_Note','Created_At','Updated_At'],
   Legal_Acts:['Act_ID','Title','Document_Number','Document_Date','Source_URL','Status','Effective_From','Checked_At','Next_Review_Date','Responsible','Notes'],
   Training_Events:['Event_ID','Date','Title','Format','Organizer','Audience','Facilities','Participants','Hours','Assessed','Average_Score','Outcome','Notes','Created_By','Created_At'],
   Training_Facility_Stats:['Event_ID','Facility_ID','Facility_Name','Participants','Staff_Category','Notes'],
@@ -31,8 +33,8 @@ const DEFAULT_HEADERS:Record<GoogleSheetTab,string[]> = {
   Users:USER_HEADERS,
 };
 const SHEET_BY_TAB:Partial<Record<Tab,GoogleSheetTab>> = {
-  facilities:'Facilities', visits:'Facility_IPC_Profile', ipc:'IPC_Assessments', training:'Training_Events',
-  amr:'AST_Data', wgs:'WGS_Staging', recommendations:'Facility_IPC_Profile', legal:'Legal_Acts', users:'Users',
+  facilities:'Facilities', visits:'IPC_Visits', ipc:'IPC_Assessments', training:'Training_Events',
+  amr:'AST_Data', wgs:'WGS_Staging', recommendations:'Recommendations', legal:'Legal_Acts', users:'Users',
 };
 const TAB_LABELS:Record<Tab,string> = {
   overview:'Огляд системи',facilities:'Реєстр закладів',visits:'Моніторингові візити',ipc:'Оцінювання IPC',
@@ -68,7 +70,6 @@ const facility=(r:SheetRecord)=>({
   care_level:getCell(r,['Care_Level','Рівень допомоги']),network_status:getCell(r,['Network_Status','Спроможна мережа']),
   monitoring_years:getCell(r,['Monitoring_Years','Роки моніторингу']),
 });
-const isAllowed=(user:AppUser,sheet:GoogleSheetTab)=>user.role==='admin'||user.role==='operator'||(user.role==='analyst'&&['Facilities','Facility_IPC_Profile','IPC_Assessments','Legal_Acts','Training_Events','Training_Facility_Stats','AST_Data','WGS_Staging','Dictionaries'].includes(sheet));
 const mapArea=(value:string)=>value.toLocaleLowerCase('uk').replace(/(територіальна громада|міська громада|селищна громада|сільська громада|отг|громада)/g,'').replace(/[^а-яіїєґa-z0-9]/gi,'').trim();
 
 export default function App(){
