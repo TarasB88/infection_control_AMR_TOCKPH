@@ -19,7 +19,22 @@ type GoogleSheetsResponse = {
   values?: unknown[][];
 };
 
+type GooglePickerBuilder = {
+  addView(view: unknown): GooglePickerBuilder;
+  setOAuthToken(token: string): GooglePickerBuilder;
+  setDeveloperKey(key: string): GooglePickerBuilder;
+  setAppId(appId: string): GooglePickerBuilder;
+  setTitle(title: string): GooglePickerBuilder;
+  setCallback(callback: (data: { action?: string; docs?: Array<{ id?: string; name?: string }> }) => void): GooglePickerBuilder;
+  build(): { setVisible(visible: boolean): void };
+};
+type GooglePickerApi = {
+  ViewId: { SPREADSHEETS: unknown };
+  Action: { PICKED: string; CANCEL: string };
+  PickerBuilder: new () => GooglePickerBuilder;
+};
 type GoogleGIS = {
+  picker?: GooglePickerApi;
   accounts: {
     oauth2: {
       initTokenClient(options: {
@@ -35,17 +50,24 @@ type GoogleGIS = {
 declare global {
   interface Window {
     google?: GoogleGIS;
+    gapi?: { load(name: string, options: { callback: () => void; onerror?: () => void; ontimeout?: () => void; timeout?: number }): void };
   }
 }
 
 const configuredClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
-const spreadsheetId = (import.meta.env.VITE_GOOGLE_SHEETS_SPREADSHEET_ID?.trim()
-  || '1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc');
-const scopes = 'openid email profile https://www.googleapis.com/auth/spreadsheets';
+const pickerApiKey = import.meta.env.VITE_GOOGLE_API_KEY?.trim() ?? '';
+const googleCloudProjectNumber = import.meta.env.VITE_GOOGLE_APP_ID?.trim() ?? '';
+let selectedSpreadsheetId = '';
+let selectedSpreadsheetName = '';
+const scopes = 'openid email profile https://www.googleapis.com/auth/drive.file';
 let accessToken = '';
 let expiresAt = 0;
 
-export const GOOGLE_SHEETS_ID = spreadsheetId;
+export const getSelectedSpreadsheet = () => ({ id: selectedSpreadsheetId, name: selectedSpreadsheetName });
+const requireSpreadsheetId = (): string => {
+  if (!selectedSpreadsheetId) throw new Error('Спочатку виберіть робочу Google-книгу через вікно Google Picker.');
+  return selectedSpreadsheetId;
+};
 export const GOOGLE_SHEET_TABS = [
   'Facilities',
   'Facility_IPC_Profile',
@@ -62,11 +84,13 @@ export const GOOGLE_SHEET_TABS = [
 ] as const;
 export type GoogleSheetTab = typeof GOOGLE_SHEET_TABS[number];
 
-export const googleClientConfigured = (): boolean => Boolean(configuredClientId);
+export const googleClientConfigured = (): boolean => Boolean(configuredClientId && pickerApiKey && googleCloudProjectNumber);
 
 export const clearGoogleSession = (): void => {
   accessToken = '';
   expiresAt = 0;
+  selectedSpreadsheetId = '';
+  selectedSpreadsheetName = '';
 };
 
 export const getGoogleAccessToken = (): string => {
@@ -84,7 +108,7 @@ export const getGoogleAccessToken = (): string => {
  */
 export const signInWithGoogle = (): Promise<string> => {
   if (!configuredClientId) {
-    return Promise.reject(new Error('Не задано VITE_GOOGLE_CLIENT_ID. Потрібен публічний OAuth Client ID для вебзастосунку.'));
+    return Promise.reject(new Error('Не задано VITE_GOOGLE_CLIENT_ID. Потрібні публічні параметри Google Cloud: OAuth Client ID, API key і номер проєкту для Google Picker.'));
   }
   if (!window.google?.accounts?.oauth2) {
     return Promise.reject(new Error('Бібліотека Google Identity Services ще не завантажилася. Оновіть сторінку та повторіть вхід.'));
@@ -149,12 +173,53 @@ export const getGoogleProfile = async (): Promise<GoogleProfile> => {
   return profile;
 };
 
+const ensurePickerLoaded = async (): Promise<GooglePickerApi> => {
+  if (!pickerApiKey || !googleCloudProjectNumber) {
+    throw new Error('Для Google Picker потрібні VITE_GOOGLE_API_KEY і VITE_GOOGLE_APP_ID. API key має бути обмежений за HTTP referrer.');
+  }
+  if (!window.gapi) throw new Error('Google Picker API ще не завантажився. Оновіть сторінку та повторіть вхід.');
+  await new Promise<void>((resolve, reject) => {
+    window.gapi!.load('picker', {
+      callback: resolve,
+      onerror: () => reject(new Error('Не вдалося завантажити Google Picker API.')),
+      ontimeout: () => reject(new Error('Час очікування Google Picker API вичерпано.')),
+      timeout: 10000,
+    });
+  });
+  if (!window.google?.picker) throw new Error('Google Picker не ініціалізовано.');
+  return window.google.picker;
+};
+
+export const selectSpreadsheetWithPicker = async (): Promise<{ id: string; name: string }> => {
+  const token = getGoogleAccessToken();
+  const pickerApi = await ensurePickerLoaded();
+  return new Promise((resolve, reject) => {
+    const picker = new pickerApi.PickerBuilder()
+      .addView(pickerApi.ViewId.SPREADSHEETS)
+      .setOAuthToken(token)
+      .setDeveloperKey(pickerApiKey)
+      .setAppId(googleCloudProjectNumber)
+      .setTitle('Виберіть робочу книгу IPC & AMR')
+      .setCallback(data => {
+        if (data.action === pickerApi.Action.PICKED && data.docs?.[0]?.id) {
+          selectedSpreadsheetId = data.docs[0].id;
+          selectedSpreadsheetName = data.docs[0].name || 'Google Sheets workbook';
+          resolve({ id: selectedSpreadsheetId, name: selectedSpreadsheetName });
+        } else if (data.action === pickerApi.Action.CANCEL) {
+          reject(new Error('Вибір робочої книги скасовано.'));
+        }
+      })
+      .build();
+    picker.setVisible(true);
+  });
+};
+
 const quoteSheet = (sheet: string): string => `'${sheet.replace(/'/g, "''")}'`;
 
 export const readSheetTable = async (sheet: GoogleSheetTab): Promise<{ headers: string[]; rows: SheetRecord[] }> => {
   const range = encodeURIComponent(`${quoteSheet(sheet)}!A:ZZ`);
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${range}?valueRenderOption=FORMATTED_VALUE&majorDimension=ROWS`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}/values/${range}?valueRenderOption=FORMATTED_VALUE&majorDimension=ROWS`,
   );
   const data = await response.json() as GoogleSheetsResponse;
   const values = Array.isArray(data.values) ? data.values : [];
@@ -186,7 +251,7 @@ export const appendSheetRows = async (
   if (!headers.length) throw new Error(`Аркуш ${sheet}: немає заголовків для зіставлення колонок.`);
   const range = encodeURIComponent(`${quoteSheet(sheet)}!A:${columnName(headers.length)}`);
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -206,7 +271,7 @@ export const updateSheetRow = async (
   if (row.length !== headers.length) throw new Error('Кількість значень не відповідає кількості колонок.');
   const range = encodeURIComponent(`${quoteSheet(sheet)}!A${rowNumber}:${columnName(headers.length)}${rowNumber}`);
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${range}?valueInputOption=RAW`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}/values/${range}?valueInputOption=RAW`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -219,7 +284,7 @@ export const updateSheetRow = async (
 export const getSpreadsheetMetadata = async (): Promise<Array<{ title: string; sheetId: number }>> => {
   const fields = encodeURIComponent('sheets.properties(title,sheetId)');
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=${fields}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}?fields=${fields}`,
   );
   const data = await response.json() as { sheets?: Array<{ properties?: { title?: string; sheetId?: number } }> };
   return (data.sheets || []).map(sheet => ({
@@ -233,7 +298,7 @@ export const createMissingSheetTabs = async (names: string[]): Promise<void> => 
   const missing = names.filter(name => !existing.has(name));
   if (!missing.length) return;
   await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}:batchUpdate`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -247,7 +312,7 @@ export const createMissingSheetTabs = async (names: string[]): Promise<void> => 
 export const getSpreadsheetTabs = async (): Promise<string[]> => {
   const fields = encodeURIComponent('sheets.properties(title,sheetId)');
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=${fields}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}?fields=${fields}`,
   );
   const data = await response.json() as { sheets?: Array<{ properties?: { title?: string } }> };
   return (data.sheets || []).map(sheet => sheet.properties?.title || '').filter(Boolean);
