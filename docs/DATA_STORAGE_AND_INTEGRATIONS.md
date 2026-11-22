@@ -32,11 +32,17 @@ R2 is not currently connected. It may later store source workbooks, generated ex
 
 ### Google Sheets
 
-Google Sheets is a planned optional integration, not an active data source. The recommended initial model is one-way inbound synchronization:
+The Worker reads the two facility-directory sources directly through Google's XLSX export endpoint:
 
-`Google Sheets → Worker → validation → D1`
+`Google Sheets export URL → Cloudflare Worker → authenticated facility directory`
 
-Use least-privilege authorization, store credentials only as Worker secrets, and require an immutable source-record ID. Do not use spreadsheet row numbers as record identities. D1 remains the system of record.
+This is a read-only connection. It does not use the Google Sheets API, OAuth, a service account, API keys, private keys, Apps Script, a Web App, or a bridge token. The Worker parses the selected GIDs, validates source headers, merges facilities by EDRPOU and returns organizational fields only.
+
+The export endpoint must be able to read each source without an interactive Google login. Google link-view permissions apply to the whole workbook, not just the selected tab. Use dedicated sanitized source workbooks containing only non-sensitive organizational fields; never expose books with patient-level records, personal contacts, credentials or restricted tabs. The Worker does not write back to Google Sheets.
+
+The private IPC/AMR target workbook is not connected to the Worker. AST data enters D1 through authenticated Excel import or manual entry; Patient_ID is HMAC-pseudonymized server-side. The app does not publish or read the private `AST_Data` or `Users` worksheets. WGS, IPC assessments, training and legal-act modules still require their own persisted forms and endpoints before operational use.
+
+The application may still require `INITIAL_ADMIN_SETUP_TOKEN` for first administrator creation and `PATIENT_HMAC_SECRET` for patient-ID pseudonymization. These are application-security settings, not Google credentials.
 
 ## Privacy and governance
 

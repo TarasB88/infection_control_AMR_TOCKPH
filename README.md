@@ -18,6 +18,7 @@ Internal Ukrainian-language information and analytics MVP for facility-level inf
 - Patient_ID HMAC-SHA-256 pseudonymization.
 - Import batch metadata and actor-attributed audit events.
 - AMR map with district/community switch.
+- Read-only facility directory connection to two Google Sheets via direct XLSX export, without Google credentials or Apps Script.
 
 Cloudflare Access is not required for the application sign-in flow.
 
@@ -60,7 +61,7 @@ npm run build
 ## Important limitations
 
 - The current user-profile and permission model is implemented for AMR AST workflows. IPC visit/assessment, WGS and legal-act modules still need their own persisted forms, endpoints and role-aware permissions before operational use.
-- Google Sheets and R2 are not connected.
+- The facility directory reads two sanitized Google Sheets sources directly; the private IPC/AMR workbook is not connected. AST remains in D1 through authenticated Excel/manual import. R2 is not connected.
 - Login rate limiting is currently email-based and should be complemented with edge-level abuse protection before a broad public rollout.
 - Do not upload identifiable patient data before security review, backup/restore testing, audit-log review, retention rules and lawful-basis assessment.
 - Never change `PATIENT_HMAC_SECRET` after real imports begin unless a planned migration of pseudonyms has been designed.
