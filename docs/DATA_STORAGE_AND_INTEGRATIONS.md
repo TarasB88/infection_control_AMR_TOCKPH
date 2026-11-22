@@ -27,7 +27,7 @@
 
 Кожен працівник входить власним Google-акаунтом. Під час першого входу на порожній аркуш `Users` записується перший адміністратор. Надалі адміністратор додає email, ПІБ, роль і коди закладів у `Users`. Паролі застосунок не створює й не зберігає.
 
-Google OAuth Client ID — публічна конфігурація вебзастосунку, а не секрет. Для збірки потрібно задати GitHub Actions repository variable `GOOGLE_OAUTH_CLIENT_ID`. Google Cloud project має мати ввімкнений Google Sheets API, налаштований OAuth consent screen і web OAuth client із дозволеним production origin.
+Google OAuth Client ID, обмежений Google Picker API key та числовий App ID — публічні параметри вебзастосунку, а не секрети. OAuth використовує scope `drive.file` і Picker вибирає конкретну книгу; для збірки потрібно задати GitHub Actions variables `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_API_KEY` і `GOOGLE_CLOUD_PROJECT_NUMBER`. Google Cloud project має мати ввімкнений Google Sheets API, налаштований OAuth consent screen і web OAuth client із дозволеним production origin.
 
 ## Критичне обмеження доступу
 
