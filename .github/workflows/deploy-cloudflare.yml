@@ -25,6 +25,22 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Validate required Google configuration
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          VITE_GOOGLE_API_KEY: ${{ vars.GOOGLE_API_KEY }}
+          VITE_GOOGLE_APP_ID: ${{ vars.GOOGLE_CLOUD_PROJECT_NUMBER }}
+        run: |
+          missing=()
+          for name in VITE_GOOGLE_CLIENT_ID VITE_GOOGLE_API_KEY VITE_GOOGLE_APP_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error title=Missing GitHub Actions variable::$name is empty. Add the matching repository variable before building."
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            exit 1
+          fi
       - name: Build frontend and type-check
         run: npm run build
         env:
