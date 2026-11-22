@@ -24,7 +24,11 @@ const CONFIG = Object.freeze({
     'Dictionaries'
   ],
   maxRows: 5000,
-  maxPayloadBytes: 900000
+  maxPayloadBytes: 900000,
+  facilitySources: [
+    { key: 'registry', spreadsheetId: '10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew', sheetId: 0 },
+    { key: 'monitoring', spreadsheetId: '12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ', sheetId: 933221082 }
+  ]
 });
 
 function doPost(e) {
@@ -77,6 +81,15 @@ function doPost(e) {
           };
         })
       });
+    }
+
+    if (action === 'previewFacilitiesSync') {
+      return output_(previewFacilitiesSync_(ss, false));
+    }
+
+    if (action === 'syncFacilities') {
+      if (body.confirm !== true) return output_({ ok: false, error: 'confirmation_required' });
+      return output_(previewFacilitiesSync_(ss, true));
     }
 
     const sheetName = String(body.sheet || '');
@@ -174,6 +187,249 @@ function doPost(e) {
     const safeMessage = /^(invalid_record|missing_key:[A-Za-z0-9_ -]{1,80}|duplicate_input_key)$/.test(message) ? message : 'internal_error';
     return output_({ ok: false, error: 'bridge_error', message: safeMessage }, 500);
   }
+}
+
+
+/**
+ * Read-only source inspection + guarded Facilities upsert.
+ * Source spreadsheet IDs and sheet GIDs are allow-listed in CONFIG; callers cannot
+ * choose arbitrary spreadsheets or tabs. Existing non-empty fields are refreshed
+ * only where an incoming value is present. Unmapped columns and formulas are kept.
+ */
+const FACILITY_FIELD_ALIASES_ = Object.freeze({
+  edrpou: ['єдрпоу', 'кодєдрпоу', 'єдрпоукод', 'кодзгідноєдрпоу', 'кодзакладу', 'кодзакладуєдрпоу', 'edrpou', 'hospitalid', 'facilitycode', 'externalcode'],
+  name: ['назва', 'назвазоз', 'назвазакладу', 'повнаназва', 'повнаназвазакладу', 'найменування', 'найменуваннязакладу', 'закладохорониздоровя', 'hospitalname', 'facilityname'],
+  director: ['керівник', 'пібкерівника', 'директор', 'керівникзакладу', 'director', 'manager'],
+  email: ['email', 'електроннапошта', 'електроннаадреса', 'поштоваадреса', 'emailзакладу'],
+  phone: ['телефон', 'контактнийтелефон', 'телефонзакладу', 'phone', 'contactphone'],
+  address: ['адреса', 'юридичнаадреса', 'фактичнаадреса', 'місцезнаходження', 'address'],
+  oblast: ['область', 'regionoblast', 'oblast', 'областьрозташування'],
+  district: ['район', 'адміністративнийрайон', 'районрозташування', 'district'],
+  hromada: ['територіальнагромада', 'громада', 'територіальнагромадазоз', 'hromada', 'territorialhromada'],
+  settlement: ['населенийпункт', 'місто', 'село', 'селище', 'settlement', 'locality'],
+  ownership: ['формавласності', 'форма власності', 'ownership', 'propertyform'],
+  care_level: ['рівеньнаданнядопомоги', 'рівеньнаданнямедичноїдопомоги', 'рівеньмедичноїдопомоги', 'рівеньзакладу', 'carelevel', 'levelofcare'],
+  network_status: ['статусуспроможніймережі', 'включеннядоспоможноїмережі', 'включеннядоспроможноїмережі', 'спроможнамережа', 'статусмережі', 'networkstatus'],
+  monitoring_years: ['рокимоніторингу', 'рікмоніторингу', 'рокипроведеннямоніторингу', 'monitoringyears', 'monitoringyear']
+});
+
+function normalizeFacilityHeader_(value) {
+  return String(value == null ? '' : value).toLocaleLowerCase('uk-UA')
+    .replace(/[’'"`]/g, '')
+    .replace(/[^0-9a-zа-яіїєґ]/gi, '');
+}
+
+function facilityFieldForHeader_(header) {
+  const normalized = normalizeFacilityHeader_(header);
+  for (const field in FACILITY_FIELD_ALIASES_) {
+    if (FACILITY_FIELD_ALIASES_[field].some(alias => normalizeFacilityHeader_(alias) === normalized)) return field;
+  }
+  return '';
+}
+
+function normalizeEdrpou_(value) {
+  const digits = String(value == null ? '' : value).replace(/[^0-9]/g, '');
+  return digits.length >= 8 && digits.length <= 10 ? digits : '';
+}
+
+function safeFacilityCell_(value) {
+  const text = String(value == null ? '' : value).trim();
+  return /^[=+@-]/.test(text) && !Number.isFinite(Number(text)) ? "'" + text : text;
+}
+
+function readFacilitySource_(source) {
+  const sourceBook = SpreadsheetApp.openById(source.spreadsheetId);
+  const sheet = sourceBook.getSheets().find(item => item.getSheetId() === source.sheetId);
+  if (!sheet) throw new Error('source_sheet_missing_' + source.key);
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow < 1 || lastColumn < 1) throw new Error('source_empty_' + source.key);
+  if (lastRow - 1 > CONFIG.maxRows) throw new Error('source_row_limit_' + source.key);
+  const values = sheet.getRange(1, 1, lastRow, lastColumn).getDisplayValues();
+  const headers = values.shift().map(value => String(value || '').trim());
+  if (headers.some(header => !header)) throw new Error('source_blank_header_' + source.key);
+  const normalized = headers.map(normalizeFacilityHeader_);
+  if (new Set(normalized).size !== normalized.length) throw new Error('source_duplicate_header_' + source.key);
+  const indexes = {};
+  headers.forEach((header, index) => {
+    const field = facilityFieldForHeader_(header);
+    if (field && indexes[field] == null) indexes[field] = index;
+  });
+  if (indexes.edrpou == null) throw new Error('source_edrpou_column_missing_' + source.key);
+  const rows = values.filter(row => row.some(cell => String(cell || '').trim() !== ''));
+  const records = [];
+  let invalidRows = 0;
+  rows.forEach((row, index) => {
+    const edrpou = normalizeEdrpou_(row[indexes.edrpou]);
+    if (!edrpou) { invalidRows++; return; }
+    const record = { edrpou: edrpou };
+    Object.keys(indexes).forEach(field => {
+      record[field] = String(row[indexes[field]] == null ? '' : row[indexes[field]]).trim();
+    });
+    records.push({ rowNumber: index + 2, record: record });
+  });
+  return { key: source.key, headers: headers, rowCount: rows.length, records: records, invalidRows: invalidRows };
+}
+
+function mergeUniqueFacilityText_(left, right, field) {
+  const values = [];
+  [left, right].forEach(value => {
+    String(value || '').split(field === 'monitoring_years' ? /[,;\n/]+/ : /\s*;\s*/).forEach(part => {
+      const cleaned = String(part || '').trim();
+      if (cleaned && values.indexOf(cleaned) < 0) values.push(cleaned);
+    });
+  });
+  return values.join('; ');
+}
+
+function previewFacilitiesSync_(targetBook, commit) {
+  const sourceA = readFacilitySource_(CONFIG.facilitySources[0]);
+  const sourceB = readFacilitySource_(CONFIG.facilitySources[1]);
+  const registryCounts = {};
+  sourceA.records.forEach(item => registryCounts[item.record.edrpou] = (registryCounts[item.record.edrpou] || 0) + 1);
+  const duplicateRegistryIds = Object.keys(registryCounts).filter(key => registryCounts[key] > 1);
+  const duplicateRegistrySet = new Set(duplicateRegistryIds);
+
+  const monitoringById = {};
+  let duplicateMonitoringIds = 0;
+  sourceB.records.forEach(item => {
+    const record = item.record;
+    if (!monitoringById[record.edrpou]) monitoringById[record.edrpou] = {};
+    else duplicateMonitoringIds++;
+    const current = monitoringById[record.edrpou];
+    Object.keys(record).forEach(field => {
+      if (field === 'edrpou') return;
+      current[field] = mergeUniqueFacilityText_(current[field], record[field], field);
+    });
+  });
+
+  const registryById = {};
+  sourceA.records.forEach(item => {
+    const record = item.record;
+    if (!duplicateRegistrySet.has(record.edrpou)) registryById[record.edrpou] = record;
+  });
+  const allIds = new Set(Object.keys(registryById).concat(Object.keys(monitoringById)));
+  const records = [];
+  let incompleteRows = 0;
+  allIds.forEach(edrpou => {
+    const primary = registryById[edrpou] || {};
+    const secondary = monitoringById[edrpou] || {};
+    const record = { edrpou: edrpou };
+    const fields = Object.keys(FACILITY_FIELD_ALIASES_);
+    fields.forEach(field => {
+      if (field === 'edrpou') return;
+      const secondaryFirst = ['care_level', 'network_status', 'monitoring_years'].indexOf(field) >= 0;
+      record[field] = secondaryFirst
+        ? (secondary[field] || primary[field] || '')
+        : (primary[field] || secondary[field] || '');
+    });
+    if (!record.name) { incompleteRows++; return; }
+    records.push(record);
+  });
+
+  const target = targetBook.getSheetByName('Facilities');
+  if (!target) throw new Error('target_facilities_sheet_missing');
+  const lastColumn = target.getLastColumn();
+  if (lastColumn < 1) throw new Error('target_facilities_headers_missing');
+  const headers = target.getRange(1, 1, 1, lastColumn).getDisplayValues()[0].map(value => String(value || '').trim());
+  if (headers.some(header => !header)) throw new Error('target_facilities_blank_header');
+  const fieldByColumn = headers.map(facilityFieldForHeader_);
+  const keyIndex = fieldByColumn.indexOf('edrpou');
+  if (keyIndex < 0) throw new Error('target_edrpou_column_missing');
+  const mapping = {};
+  headers.forEach((header, index) => { if (fieldByColumn[index]) mapping[header] = fieldByColumn[index]; });
+  const lastRow = target.getLastRow();
+  const existingValues = lastRow > 1 ? target.getRange(2, 1, lastRow - 1, lastColumn).getValues() : [];
+  const existingFormulas = lastRow > 1 ? target.getRange(2, 1, lastRow - 1, lastColumn).getFormulas() : [];
+  const targetCounts = {};
+  existingValues.forEach(row => {
+    const key = normalizeEdrpou_(row[keyIndex]);
+    if (key) targetCounts[key] = (targetCounts[key] || 0) + 1;
+  });
+  const duplicateTargetIds = Object.keys(targetCounts).filter(key => targetCounts[key] > 1);
+  const duplicateTargetSet = new Set(duplicateTargetIds);
+  const existingIndex = {};
+  existingValues.forEach((row, index) => {
+    const key = normalizeEdrpou_(row[keyIndex]);
+    if (key && !duplicateTargetSet.has(key)) existingIndex[key] = index;
+  });
+
+  const eligible = records.filter(record => !duplicateTargetSet.has(record.edrpou));
+  let newCount = 0, updateCount = 0;
+  eligible.forEach(record => {
+    if (existingIndex[record.edrpou] == null) newCount++;
+    else updateCount++;
+  });
+  const unmappedHeaders = headers.filter((header, index) => !fieldByColumn[index]);
+  const report = {
+    ok: true,
+    mode: commit ? 'sync' : 'preview',
+    registry: { rows: sourceA.rowCount, invalidRows: sourceA.invalidRows, duplicateIds: duplicateRegistryIds.length, headers: sourceA.headers },
+    monitoring: { rows: sourceB.rowCount, invalidRows: sourceB.invalidRows, duplicateRows: duplicateMonitoringIds, headers: sourceB.headers },
+    target: { rows: existingValues.length, headers: headers, mappedColumns: mapping, unmappedHeaders: unmappedHeaders },
+    summary: {
+      sourceFacilities: records.length,
+      incompleteRows: incompleteRows,
+      duplicateRegistryIds: duplicateRegistryIds.length,
+      duplicateTargetIds: duplicateTargetIds.length,
+      newRecords: newCount,
+      recordsToUpdate: updateCount,
+      skippedForAmbiguousTarget: duplicateTargetIds.length
+    },
+    sample: eligible.slice(0, 5).map(record => ({ edrpou: record.edrpou, name: record.name, oblast: record.oblast, hromada: record.hromada, care_level: record.care_level, network_status: record.network_status }))
+  };
+  if (!commit) return report;
+
+  if (eligible.length === 0) {
+    report.inserted = 0;
+    report.updated = 0;
+    report.unchanged = 0;
+    return report;
+  }
+
+  const nextExisting = existingValues.map((row, rowIndex) => row.map((value, columnIndex) =>
+    existingFormulas[rowIndex][columnIndex] ? existingFormulas[rowIndex][columnIndex] : value
+  ));
+  const newRows = [];
+  let updated = 0, unchanged = 0;
+  eligible.forEach(record => {
+    const existingRowIndex = existingIndex[record.edrpou];
+    const isNew = existingRowIndex == null;
+    const row = isNew ? new Array(headers.length).fill('') : nextExisting[existingRowIndex].slice();
+    let changed = false;
+    headers.forEach((header, columnIndex) => {
+      const field = fieldByColumn[columnIndex];
+      if (!field) return;
+      const incoming = String(record[field] || '').trim();
+      if (!incoming || (!isNew && existingFormulas[existingRowIndex][columnIndex])) return;
+      const safeValue = safeFacilityCell_(incoming);
+      if (String(row[columnIndex] == null ? '' : row[columnIndex]) !== safeValue) {
+        row[columnIndex] = safeValue;
+        changed = true;
+      }
+    });
+    if (isNew) newRows.push(row);
+    else if (changed) { nextExisting[existingRowIndex] = row; updated++; }
+    else unchanged++;
+  });
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('write_busy_retry');
+  try {
+    if (updated > 0 && nextExisting.length) {
+      target.getRange(2, 1, nextExisting.length, headers.length).setValues(nextExisting);
+    }
+    if (newRows.length) {
+      const startRow = Math.max(2, target.getLastRow() + 1);
+      target.getRange(startRow, 1, newRows.length, headers.length).setValues(newRows);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  report.inserted = newRows.length;
+  report.updated = updated;
+  report.unchanged = unchanged;
+  return report;
 }
 
 function output_(data, status) {
