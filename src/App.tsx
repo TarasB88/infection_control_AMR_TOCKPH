@@ -27,6 +27,7 @@ export default function App(){
  const [user,setUser]=useState<{id:string;email:string;fullName:string;role:'admin'|'operator'|'analyst';isActive:boolean;allFacilities:boolean;facilityCodes:string[]}|null>(null);
  const [authLoading,setAuthLoading]=useState(true),[authError,setAuthError]=useState(''),[adminUsers,setAdminUsers]=useState<any[]>([]),[csrfToken,setCsrfToken]=useState(''),[setupRequired,setSetupRequired]=useState(false),[setupTokenConfigured,setSetupTokenConfigured]=useState(false),[setupToken,setSetupToken]=useState(''),[setupName,setSetupName]=useState(''),[setupEmail,setSetupEmail]=useState(''),[setupPassword,setSetupPassword]=useState(''),[loginEmail,setLoginEmail]=useState(''),[loginPassword,setLoginPassword]=useState('');
  const [googleSheetsStatus,setGoogleSheetsStatus]=useState('Google Sheets ще не перевірено.'),[googleSheetsBusy,setGoogleSheetsBusy]=useState(false);
+ const [facilitySyncPreview,setFacilitySyncPreview]=useState<any|null>(null);
  const [userDraft,setUserDraft]=useState({email:'',fullName:'',role:'operator' as 'admin'|'operator'|'analyst',isActive:true,allFacilities:false,facilityCodes:'',password:''});
  const emptyAstRow:Row={Hospital_ID:'',Hospital_Name:'',Region_Oblast:'Тернопільська',Territorial_Hromada:'',Settlement:'',Patient_ID:'',Sample_ID:'',Sampling_Date:'',Sample_Matrix_Type:'',Bacterial_Species:'',Antimicrobial_Agent:'',MIC_Operator:'=',MIC_Value:'',Zone_Diameter:'',SIR_Category:'',Interpretation_Standard:'EUCAST'};
  const [manualRow,setManualRow]=useState<Row>(emptyAstRow);
@@ -117,6 +118,36 @@ export default function App(){
  };
  const checkGoogleSheets=async()=>{setGoogleSheetsBusy(true);setGoogleSheetsStatus('Перевірка з’єднання з Google Sheets…');try{const response=await fetch('/api/admin/google-sheets',{credentials:'same-origin',headers:{accept:'application/json'}});const data=await readApiJson<{sheets?:Array<{name:string;rows:number;columns:number;headers:string[];readable:boolean}>;error?:string}>(response);if(!response.ok)throw new Error(data.error||'HTTP '+response.status);const names=(data.sheets||[]).map(x=>x.name+' ('+x.rows+' рядків; '+x.columns+' колонок)'+(x.headers?.length?' — '+x.headers.join(', '):''));setGoogleSheetsStatus('З’єднання успішне. Структура аркушів: '+names.join(' | '));}catch(error){setGoogleSheetsStatus('Помилка: '+(error instanceof Error?error.message:String(error)));}finally{setGoogleSheetsBusy(false);}};
  const syncGoogleSheetsAst=async()=>{setGoogleSheetsBusy(true);setNotice('Синхронізація AST_Data з Google Sheets до D1…');try{const response=await fetch('/api/admin/google-sheets',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({action:'syncAst'})});const data=await readApiJson<{rowsProcessed?:number;rowsRejected?:number;message?:string;error?:string;status?:string}>(response);if(!response.ok)throw new Error(data.message||data.error||'HTTP '+response.status);await loadFromD1(false);setNotice('Синхронізацію AST завершено. Опрацьовано: '+(data.rowsProcessed??0)+', відхилено: '+(data.rowsRejected??0)+'.');}catch(error){setNotice('Синхронізація не виконана: '+(error instanceof Error?error.message:String(error)));}finally{setGoogleSheetsBusy(false);}};
+
+ const previewGoogleFacilities=async()=>{
+  setGoogleSheetsBusy(true);setFacilitySyncPreview(null);setGoogleSheetsStatus('Зчитування двох джерел ЗОЗ та перевірка збігів за ЄДРПОУ…');
+  try{
+   const response=await fetch('/api/admin/google-sheets',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({action:'previewFacilities'})});
+   const data=await readApiJson<any>(response);
+   if(!response.ok||data.ok!==true)throw new Error(data.message||data.error||'HTTP '+response.status);
+   setFacilitySyncPreview(data);
+   const summary=data.summary||{};
+   setGoogleSheetsStatus('Попередній перегляд готовий: '+(summary.sourceFacilities??0)+' унікальних записів; до додавання — '+(summary.newRecords??0)+', до оновлення — '+(summary.recordsToUpdate??0)+'.');
+  }catch(error){setGoogleSheetsStatus('Не вдалося підготувати попередній перегляд: '+(error instanceof Error?error.message:String(error)));}
+  finally{setGoogleSheetsBusy(false);}
+ };
+ const syncGoogleFacilities=async()=>{
+  if(!facilitySyncPreview)return;
+  const summary=facilitySyncPreview.summary||{};
+  const expected=(summary.newRecords||0)+(summary.recordsToUpdate||0);
+  if(expected===0){setGoogleSheetsStatus('Немає однозначних записів для перенесення.');return;}
+  if(!window.confirm('Записати в Facilities '+(summary.newRecords||0)+' нових записів і оновити '+(summary.recordsToUpdate||0)+' наявних? Дублікати та порожні поля не будуть перезаписані.'))return;
+  setGoogleSheetsBusy(true);setGoogleSheetsStatus('Виконується синхронізація реєстру ЗОЗ…');
+  try{
+   const response=await fetch('/api/admin/google-sheets',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({action:'syncFacilities',confirm:true})});
+   const data=await readApiJson<any>(response);
+   if(!response.ok||data.ok!==true)throw new Error(data.message||data.error||'HTTP '+response.status);
+   setFacilitySyncPreview(data);
+   setGoogleSheetsStatus('Синхронізацію завершено: додано '+(data.inserted??0)+', оновлено '+(data.updated??0)+', без змін '+(data.unchanged??0)+'.');
+   setNotice('Реєстр Facilities оновлено без видалення наявних рядків.');
+  }catch(error){setGoogleSheetsStatus('Синхронізацію не виконано: '+(error instanceof Error?error.message:String(error)));}
+  finally{setGoogleSheetsBusy(false);}
+ };
  const submitLogin=async(event:FormEvent)=>{
   event.preventDefault();setAuthError('Увійдемо до системи…');
   try{const response=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({email:loginEmail,password:loginPassword})});const data=await readApiJson<{message?:string;error?:string}>(response);if(!response.ok){setAuthError(data.message||data.error||'Не вдалося увійти.');return;}window.location.reload();}
