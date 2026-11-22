@@ -67,6 +67,11 @@ async function session(req:Request,e:Env):Promise<User|null>{
  if(!await crypto.subtle.verify('HMAC',key,unb64(sig),te.encode(body)))return null;
  try{const d=JSON.parse(td.decode(unb64(body)));return d.exp>Date.now()?d.u as User:null;}catch{return null;}
 }
+async function liveSession(req:Request,e:Env):Promise<User|null>{
+ const signed=await session(req,e);if(!signed)return null;
+ const t=await readTable(e,'Users'),row=t.rows.find(r=>String(r.Username||'').toLowerCase()===signed.username.toLowerCase());
+ return row&&yes(row.Is_Active)?toUser(row):null;
+}
 const cookie=(v:string,age=28800)=>'ipc_session='+v+'; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age='+age;
 const inScope=(u:User,c:string)=>u.allFacilities||u.facilityCodes.includes(c);
 function scoped(s:Sheet,rows:Record<string,string>[],u:User){
@@ -93,8 +98,9 @@ async function handle(req:Request,e:Env):Promise<Response>{
   const u=toUser(r);return reply({user:u},200,{'Set-Cookie':cookie(await makeSession(u,e))});
  }
  if(p==='/api/auth/logout'&&req.method==='POST')return reply({ok:true},200,{'Set-Cookie':cookie('',0)});
- if(p==='/api/auth/me'&&req.method==='GET'){const u=await session(req,e);return u?reply({user:u}):reply({user:null},401);}
- const u=await session(req,e);if(!u)return reply({error:'Потрібно увійти в систему.'},401);
+ if(p==='/api/auth/me'&&req.method==='GET'){const u=await liveSession(req,e);return u?reply({user:u}):reply({user:null},401);}
+ const u=await liveSession(req,e);if(!u)return reply({error:'Потрібно увійти в систему або обліковий запис деактивовано.'},401);
+ if(u.mustChangePassword&&p!=='/api/auth/change-password')return reply({error:'Перед продовженням роботи змініть початковий пароль.'},403);
  if(p==='/api/auth/change-password'&&req.method==='POST'){
   const b=await req.json() as {currentPassword?:string;newPassword?:string},current=String(b.currentPassword||''),next=String(b.newPassword||'');
   if(next.length<12||next.length>128)return reply({error:'Новий пароль має містити від 12 до 128 символів.'},400);
@@ -137,7 +143,7 @@ async function handle(req:Request,e:Env):Promise<Response>{
 }
 export default {async fetch(req:Request,e:Env){
  const url=new URL(req.url);if(url.pathname.startsWith('/api/')){
-  if(req.method!=='GET'&&req.headers.get('Origin')&&req.headers.get('Origin')!==url.origin)return reply({error:'Недійсне джерело запиту.'},403);
+  if(req.method!=='GET'&&req.headers.get('Origin')!==url.origin)return reply({error:'Недійсне джерело запиту.'},403);
   if(!e.SESSION_SECRET)return reply({error:'Не налаштовано SESSION_SECRET у Cloudflare Worker.'},503);
   try{return await handle(req,e);}catch(err){return reply({error:err instanceof Error?err.message:'Внутрішня помилка сервера.'},500);}
  }return e.ASSETS.fetch(req);
