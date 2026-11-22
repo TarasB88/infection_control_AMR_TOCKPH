@@ -1,57 +1,52 @@
-# Google Sheets integration
+# Google Sheets без service account та Apps Script
 
-The dashboard uses two server-side connection patterns. No Apps Script project, Apps Script Web App, or Apps Script trigger is used.
+## 1. Які дані читаються напряму
 
-## 1. Facility directory sources — direct XLSX export
-
-The two facility source tabs are fetched in the same way as the pixel-perfect-picture-378 project:
+Для реєстру закладів Worker читає дві вихідні Google-таблиці через XLSX export:
 
 `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/export?format=xlsx&gid=SHEET_GID`
 
-The Cloudflare Worker downloads the XLSX file server-side and parses it with the existing `xlsx` package. This avoids browser CORS restrictions and does not require a service account for these two read-only source tabs.
+Worker завантажує файл на сервері, читає лише аркуш із вказаним GID та повертає зіставлені організаційні поля. Браузер не звертається до Google напряму, тому не потрібне налаштування CORS.
 
-Configured sources:
-
-| Source | Spreadsheet ID | Sheet GID |
+| Джерело | Spreadsheet ID | Sheet GID |
 | --- | --- | ---: |
-| Facility registry | `10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew` | `0` |
-| Facility monitoring | `12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ` | `933221082` |
+| Реєстр закладів | `10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew` | `0` |
+| Дані моніторингу | `12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ` | `933221082` |
 
-**Access and privacy requirement:** Google's export URL works only when the spreadsheet is accessible to the Worker without an interactive login (for example, link-view access). Link-view access is granted at the workbook level, not just to the selected GID. Therefore, do not enable link-view access on a workbook containing personal contact details, patient-level data, credentials, or other non-public tabs. If a source workbook contains such material, create a separate sanitized workbook containing only the fields needed for the facility directory, then update the spreadsheet ID/GID constants in `src/worker.ts` to those sanitized sources.
+**Для цього підключення не потрібні Google service account, OAuth-клієнт, API key, приватний ключ, Apps Script або Google API.** Дані читаються лише для перегляду; Worker не записує нічого назад у Google Sheets.
 
-The Worker returns only the mapped organizational fields. It does not return director names, emails, or phone numbers.
+## 2. Доступ до вихідних таблиць і захист даних
 
-## 2. IPC/AMR target workbook — private Google Sheets API
+XLSX export має бути доступним Worker без інтерактивного входу до Google. Для цього вихідна таблиця повинна дозволяти перегляд за посиланням або мати інший сумісний режим анонімного читання.
 
-The target workbook remains private because it contains operational data, including the `AST_Data` tab and potentially patient identifiers. It is accessed server-side through the Google Sheets API using a service account.
+Важливо: доступ за посиланням надається на рівні всієї книги, а не лише одного аркуша. Тому не змінюйте налаштування доступу до книги, якщо в ній є персональні контакти, дані пацієнтів, облікові дані або інша інформація з обмеженим доступом. За потреби створіть окремі санітизовані книги, які містять тільки організаційні поля для реєстру ЗОЗ, і замініть ID/GID у `src/worker.ts`.
 
-| Workbook | Spreadsheet ID | Permission |
-| --- | --- | --- |
-| IPC/AMR target workbook | `1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc` | Editor |
+Worker не повертає поля керівника, електронної пошти чи телефону. Однак фільтрація на Worker не захищає інші аркуші від перегляду, якщо вся вихідна книга відкрита за посиланням.
 
-Create a dedicated Google service account, enable Google Sheets API, and share only the target workbook with its `client_email`. Add these encrypted Cloudflare Worker secrets:
+## 3. Де зберігаються чутливі дані
 
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
-- `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
+Приватна цільова книга IPC/AMR **не підключається до Worker через Google Sheets API**. Її не потрібно відкривати за посиланням і не потрібно надавати доступ сервісному акаунту.
 
-Do not commit the service-account JSON key or send the private key in chat. The `Users` tab is excluded from generic reads.
+- AST завантажується через захищений Excel-імпорт або вводиться вручну в інтерфейсі.
+- Після серверної перевірки AST зберігається в Cloudflare D1.
+- Patient_ID не повертається в таблиці інтерфейсу; перед збереженням він перетворюється на HMAC-псевдонім.
+- Аркуші Users, AST_Data та інші закриті аркуші приватної книги не публікуються і не читаються напряму.
+- WGS та інші модулі мають використовувати окремі захищені форми імпорту до D1, коли буде реалізовано їхню схему.
 
-The private target workbook is intentionally not made public. A public XLSX export of the whole target workbook could expose AST patient identifiers and other restricted tabs.
+Параметри `INITIAL_ADMIN_SETUP_TOKEN` та `PATIENT_HMAC_SECRET`, якщо вони налаштовані в Worker, стосуються окремо початкового створення адміністратора та псевдонімізації пацієнтських ідентифікаторів. Вони не є обліковими даними Google і не використовуються для зчитування таблиць.
 
-## 3. Verify
+## 4. Перевірка після розгортання
 
-After deployment:
+1. Увійдіть до дашборду під активним обліковим записом.
+2. Відкрийте **Реєстр закладів**. Worker має повернути об’єднаний перелік із двох вихідних Google Sheets.
+3. Натисніть **Оновити перелік**, щоб повторно отримати актуальні дані.
+4. Для AST відкрийте **Моніторинг AMR** або **Імпорт даних**, завантажте Excel-шаблон, заповніть його та виконайте імпорт. Результати з’являться після зчитування з D1.
 
-1. Sign in as an administrator.
-2. Open **Імпорт та контроль якості даних** and select **Перевірити з’єднання**. This checks the private target workbook and lists allow-listed tabs.
-3. Open **Реєстр закладів**. The Worker fetches the two source tabs using direct XLSX export.
-4. Use **Попередній перегляд змін** before **Оновити зараз → Facilities**. The latter writes mapped non-empty values into the private target workbook and does not overwrite formula cells.
+Якщо джерело повертає HTTP 403/404 або замість XLSX надходить сторінка входу Google, перевірте права перегляду та ID/GID. Не відкривайте книгу публічно, доки не переконаєтеся, що в ній немає даних з обмеженим доступом.
 
-AST data is read from the private `AST_Data` tab and passes through authenticated validation and D1 persistence, including HMAC pseudonymization of patient identifiers.
+## 5. Обмеження цього варіанта
 
-## 4. Limitations
-
-- Direct XLSX export is read-only. It cannot write back to Google Sheets.
-- Facility synchronization writes to the private target workbook through the Google Sheets API.
-- Automatic scheduled sync is not implemented; use the manual preview and synchronization controls.
-- If a source export returns HTTP 403/404 or an HTML login page, check its sharing settings or replace it with a sanitized, link-view export workbook.
+- Підключення Google Sheets є прямим, безпосереднім і тільки для читання.
+- Довідник ЗОЗ оновлюється при повторному запиті до вихідних таблиць; запису назад у Google Sheets немає.
+- Приватні вкладки не можуть бути прочитані без автентифікації Google. Для них використовується захищений імпорт у D1, а не публічний XLSX export.
+- Автоматичний розклад синхронізації не налаштований.
