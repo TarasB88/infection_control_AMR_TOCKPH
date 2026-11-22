@@ -2,7 +2,7 @@
 
 ## AST import: one row per isolate × antimicrobial agent
 
-| Supplied column | Database field | Rule |
+| Excel / source column | Google Sheets column | Rule |
 |---|---|---|
 | Hospital_ID | hospital_id | Link to facility registry when matched |
 | Hospital_Name | hospital_name | Preserve source value |
