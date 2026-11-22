@@ -485,6 +485,15 @@ function installFacilitiesAutoSync_() {
   return Object.assign(getFacilitiesAutoSyncStatus_(), { created: created });
 }
 
+/**
+ * Run once from the Apps Script editor if Google asks the owner to authorize
+ * trigger-management scopes before the dashboard can enable auto-refresh.
+ * This enables the same edit and hourly triggers as the dashboard control.
+ */
+function setupFacilitiesAutoSync() {
+  return installFacilitiesAutoSync_();
+}
+
 function removeFacilitiesAutoSync_() {
   const handlers = ['sourceSpreadsheetEditHandler_', 'scheduledFacilitiesSync_', 'debouncedFacilitiesSync_'];
   let deleted = 0;
@@ -494,7 +503,9 @@ function removeFacilitiesAutoSync_() {
       deleted++;
     }
   });
-  PropertiesService.getScriptProperties().setProperty('FACILITIES_AUTO_SYNC_ENABLED', 'false');
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('FACILITIES_AUTO_SYNC_ENABLED', 'false');
+  props.setProperty('FACILITIES_AUTO_SYNC_PENDING', 'false');
   return Object.assign(getFacilitiesAutoSyncStatus_(), { deleted: deleted });
 }
 
