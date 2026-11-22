@@ -1,181 +1,302 @@
-import type {FormEvent} from 'react';
-import {useEffect,useMemo,useRef,useState} from 'react';
-import {Activity,AlertCircle,ArrowDownToLine,ArrowUpFromLine,BadgeCheck,Building2,CalendarDays,ClipboardCheck,Dna,FileSpreadsheet,FlaskConical,LayoutDashboard,Menu,Microscope,GraduationCap,Search,ShieldCheck,SlidersHorizontal,Users,X} from 'lucide-react';
+import type { FormEvent } from 'react';
+import { useMemo, useState } from 'react';
+import { Activity, AlertCircle, ArrowDownToLine, ArrowUpFromLine, BadgeCheck, Building2, CalendarDays, ClipboardCheck, Dna, FileSpreadsheet, FlaskConical, LayoutDashboard, LogOut, Menu, Microscope, Plus, Search, ShieldCheck, Users, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AmrMap } from './components/AmrMap';
 import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
-import { Training } from './components/Training';
-type Tab='overview'|'facilities'|'visits'|'ipc'|'amr'|'recommendations'|'imports'|'legal'|'training'|'users';
-type Row={Hospital_ID:string;Hospital_Name:string;Region_Oblast:string;Territorial_Hromada:string;Settlement:string;Patient_ID:string;Sample_ID:string;Sampling_Date:string;Sample_Matrix_Type:string;Bacterial_Species:string;Antimicrobial_Agent:string;MIC_Operator:string;MIC_Value:string;Zone_Diameter:string;SIR_Category:string;Interpretation_Standard:string};
-type FacilityRecord={edrpou:string;name:string;oblast:string;district:string;hromada:string;settlement:string;address:string;ownership:string;care_level:string;network_status:string;monitoring_years:string};
-type ApiError={message?:string;error?:string};
-async function readApiJson<T>(response:Response):Promise<T>{
- const body=await response.text();
- const contentType=response.headers.get('content-type')||'';
- if(!contentType.toLowerCase().includes('application/json')){
-  throw new Error('API повернув HTML або іншу відповідь замість JSON (HTTP '+response.status+', Content-Type: '+(contentType||'не вказано')+'). Перевірте, чи запит обробляє Worker, а не статична сторінка Cloudflare.');
- }
- try{return (body?JSON.parse(body):{}) as T;}
- catch{throw new Error('API повернув некоректний JSON (HTTP '+response.status+').');}
-}
-const normalizeArea=(value:string)=>value.toLocaleLowerCase('uk').replace(/(територіальна громада|міська громада|селищна громада|сільська громада|отг|громада)/g,'').replace(/[^а-яіїєґa-z0-9]/gi,'').trim();
-const required=['Hospital_ID','Hospital_Name','Region_Oblast','Territorial_Hromada','Settlement','Patient_ID','Sample_ID','Sampling_Date','Sample_Matrix_Type','Bacterial_Species','Antimicrobial_Agent','MIC_Operator','MIC_Value','Zone_Diameter','SIR_Category','Interpretation_Standard'];
-const nav=[{id:'overview' as Tab,label:'Огляд системи',icon:LayoutDashboard,group:'РОБОЧА ПАНЕЛЬ'},{id:'facilities' as Tab,label:'Реєстр закладів',icon:Building2,group:'РОБОЧА ПАНЕЛЬ'},{id:'visits' as Tab,label:'Моніторингові візити',icon:CalendarDays,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'ipc' as Tab,label:'Оцінювання IPC',icon:ClipboardCheck,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'training' as Tab,label:'Навчальні заходи',icon:GraduationCap,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},{id:'amr' as Tab,label:'Моніторинг AMR',icon:Microscope,group:'ЛАБОРАТОРНИЙ НАГЛЯД'},{id:'recommendations' as Tab,label:'Рекомендації',icon:BadgeCheck,group:'ІНСТРУМЕНТИ'},{id:'imports' as Tab,label:'Імпорт даних',icon:FileSpreadsheet,group:'ІНСТРУМЕНТИ'},{id:'legal' as Tab,label:'Моніторинг НПА',icon:FileSpreadsheet,group:'НОРМАТИВНО-ПРАВОВА БАЗА'},{id:'users' as Tab,label:'Користувачі та доступ',icon:Users,group:'АДМІНІСТРУВАННЯ'}];
-const modules=[{icon:Building2,name:'Реєстр закладів',desc:'Картки закладів та історія моніторингу',id:'facilities' as Tab,tag:'IPC'},{icon:ClipboardCheck,name:'Оцінювання IPC',desc:'Критерії, результати та динаміка візитів',id:'ipc' as Tab,tag:'IPC'},{icon:Microscope,name:'Мікробіологічний AMR',desc:'Антибіотикограми, MIC та категорії S/I/R',id:'amr' as Tab,tag:'AMR'},{icon:Dna,name:'Геномний нагляд WGS',desc:'MLST, гени AMR, вірулентність і плазміди',id:'amr' as Tab,tag:'WGS'},{icon:CalendarDays,name:'Моніторингові візити',desc:'Планування, історія та звіти',id:'visits' as Tab,tag:'IPC'},{icon:GraduationCap,name:'Навчальні заходи',desc:'Облік тренінгів, семінарів та охоплення працівників',id:'training' as Tab,tag:'IPC'},{icon:BadgeCheck,name:'Коригувальні заходи',desc:'Рекомендації, терміни та контроль виконання',id:'recommendations' as Tab,tag:'IPC'},{icon:FileSpreadsheet,name:'Моніторинг НПА',desc:'Актуальність нормативних вимог та зміни документів',id:'legal' as Tab,tag:'НПА'}];
+import {
+  appendSheetRows, clearGoogleSession, createMissingSheetTabs, getGoogleProfile, getSpreadsheetTabs,
+  googleClientConfigured, GOOGLE_SHEET_TABS, readSheetTable, signInWithGoogle,
+  type GoogleProfile, type GoogleSheetTab, type SheetRecord,
+} from './lib/google-sheets';
+
+type Tab = 'overview'|'facilities'|'visits'|'ipc'|'training'|'amr'|'wgs'|'recommendations'|'imports'|'legal'|'users';
+type Role = 'admin'|'operator'|'analyst';
+type AppUser = { id:string; email:string; fullName:string; role:Role; isActive:boolean; allFacilities:boolean; facilityCodes:string[] };
+type SheetState = { headers:string[]; rows:SheetRecord[] };
+type AstRow = { Hospital_ID:string; Hospital_Name:string; Region_Oblast:string; Territorial_Hromada:string; Settlement:string; Patient_ID:string; Sample_ID:string; Sampling_Date:string; Sample_Matrix_Type:string; Bacterial_Species:string; Antimicrobial_Agent:string; MIC_Operator:string; MIC_Value:string; Zone_Diameter:string; SIR_Category:string; Interpretation_Standard:string };
+const AST_HEADERS = ['Hospital_ID','Hospital_Name','Region_Oblast','Territorial_Hromada','Settlement','Patient_ID','Sample_ID','Sampling_Date','Sample_Matrix_Type','Bacterial_Species','Antimicrobial_Agent','MIC_Operator','MIC_Value','Zone_Diameter','SIR_Category','Interpretation_Standard'];
+const USER_HEADERS = ['Google_Sub','Email','Full_Name','Role','Is_Active','All_Facilities','Facility_Codes','Created_At','Updated_At'];
+const DEFAULT_HEADERS:Record<GoogleSheetTab,string[]> = {
+  Facilities:['EDRPOU','Name','Region_Oblast','District','Territorial_Hromada','Settlement','Address','Ownership','Care_Level','Network_Status','Monitoring_Years'],
+  Facility_IPC_Profile:['Facility_ID','Facility_Name','Profile_Date','VIK_Unit','VIK_Staff_Count','VIK_FTE_Count','IPC_Program','Notes'],
+  IPC_Assessments:['Assessment_ID','Facility_ID','Facility_Name','Visit_Date','Criterion_Code','Criterion_Name','Result','Score','Comment','Assessed_By','Created_At'],
+  Legal_Acts:['Act_ID','Title','Document_Number','Document_Date','Source_URL','Status','Effective_From','Checked_At','Next_Review_Date','Responsible','Notes'],
+  Training_Events:['Event_ID','Date','Title','Format','Organizer','Audience','Facilities','Participants','Hours','Assessed','Average_Score','Outcome','Notes','Created_By','Created_At'],
+  Training_Facility_Stats:['Event_ID','Facility_ID','Facility_Name','Participants','Staff_Category','Notes'],
+  AST_Data:AST_HEADERS,
+  WGS_Staging:['WGS_ID','Hospital_ID','Hospital_Name','Sample_ID','Isolate_ID','Sequencing_Date','Sequencing_Platform','MLST_ST','Serotype_K_O_Antigen','AMR_Genotype_Genes','Point_Mutations','Virulence_Genes','Plasmid_Replicon_Type','FASTA_FASTQ_File_Link','Notes','Created_By','Created_At'],
+  Dictionaries:['Dictionary','Code','Label','Parent_Code','Is_Active','Notes'],
+  Users:USER_HEADERS,
+};
+const SHEET_BY_TAB:Partial<Record<Tab,GoogleSheetTab>> = {
+  facilities:'Facilities', visits:'Facility_IPC_Profile', ipc:'IPC_Assessments', training:'Training_Events',
+  amr:'AST_Data', wgs:'WGS_Staging', recommendations:'Facility_IPC_Profile', legal:'Legal_Acts', users:'Users',
+};
+const TAB_LABELS:Record<Tab,string> = {
+  overview:'Огляд системи',facilities:'Реєстр закладів',visits:'Моніторингові візити',ipc:'Оцінювання IPC',
+  training:'Навчальні заходи',amr:'Моніторинг AST',wgs:'Геномний нагляд WGS',recommendations:'Рекомендації',
+  imports:'Імпорт даних',legal:'Моніторинг НПА',users:'Користувачі та доступ',
+};
+const REQUIRED_AST = AST_HEADERS.filter(field => !['Patient_ID','MIC_Operator','MIC_Value','Zone_Diameter'].includes(field));
+const norm=(value:string)=>value.toLocaleLowerCase('uk').replace(/[’'"_\s-]/g,'').replace(/[^a-zа-яіїєґ0-9]/gi,'');
+const getCell=(record:SheetRecord,names:string[],fallback='')=>{
+  for(const name of names){
+    const key=norm(name);
+    const found=Object.entries(record).find(([header])=>norm(header)===key);
+    if(found)return String(found[1]??'').trim();
+  }
+  return fallback;
+};
+const parseAst=(record:SheetRecord):AstRow=>Object.fromEntries(AST_HEADERS.map(key=>[key,getCell(record,[key])])) as unknown as AstRow;
+const parseUser=(record:SheetRecord):AppUser=>({
+  id:getCell(record,['Google_Sub','Google_Subject','Google_ID'])||getCell(record,['Email']).toLowerCase(),
+  email:getCell(record,['Email']).toLowerCase(),
+  fullName:getCell(record,['Full_Name','ПІБ'])||getCell(record,['Email']),
+  role:(['admin','operator','analyst'].includes(getCell(record,['Role']).toLowerCase())?getCell(record,['Role']).toLowerCase():'analyst') as Role,
+  isActive:getCell(record,['Is_Active'])===''||['true','1','yes','так','active'].includes(getCell(record,['Is_Active']).toLowerCase()),
+  allFacilities:['true','1','yes','так'].includes(getCell(record,['All_Facilities']).toLowerCase()),
+  facilityCodes:getCell(record,['Facility_Codes']).split(/[;,\n]/).map(v=>v.trim()).filter(Boolean),
+});
+const facility=(r:SheetRecord)=>({
+  edrpou:getCell(r,['EDRPOU','ЄДРПОУ','Hospital_ID']),
+  name:getCell(r,['Name','Назва','Hospital_Name']),
+  oblast:getCell(r,['Region_Oblast','Область']),district:getCell(r,['District','Район']),
+  hromada:getCell(r,['Territorial_Hromada','Громада']),settlement:getCell(r,['Settlement','Населений пункт']),
+  address:getCell(r,['Address','Адреса']),ownership:getCell(r,['Ownership','Форма власності']),
+  care_level:getCell(r,['Care_Level','Рівень допомоги']),network_status:getCell(r,['Network_Status','Спроможна мережа']),
+  monitoring_years:getCell(r,['Monitoring_Years','Роки моніторингу']),
+});
+const isAllowed=(user:AppUser,sheet:GoogleSheetTab)=>user.role==='admin'||user.role==='operator'||(user.role==='analyst'&&['Facilities','Facility_IPC_Profile','IPC_Assessments','Legal_Acts','Training_Events','Training_Facility_Stats','AST_Data','WGS_Staging','Dictionaries'].includes(sheet));
+const mapArea=(value:string)=>value.toLocaleLowerCase('uk').replace(/(територіальна громада|міська громада|селищна громада|сільська громада|отг|громада)/g,'').replace(/[^а-яіїєґa-z0-9]/gi,'').trim();
+
 export default function App(){
- const [tab,setTab]=useState<Tab>('overview'),[mobile,setMobile]=useState(false),[query,setQuery]=useState(''),[rows,setRows]=useState<Row[]>([]),[notice,setNotice]=useState('Перевірка авторизації…'),[speciesFilter,setSpeciesFilter]=useState('all'),[agentFilter,setAgentFilter]=useState('all'),[sirFilter,setSirFilter]=useState('all'),[selectedDistrict,setSelectedDistrict]=useState('all'),[selectedCommunity,setSelectedCommunity]=useState('all');
- const [user,setUser]=useState<{id:string;email:string;fullName:string;role:'admin'|'operator'|'analyst';isActive:boolean;allFacilities:boolean;facilityCodes:string[]}|null>(null);
- const [facilities,setFacilities]=useState<FacilityRecord[]>([]),[facilityLoading,setFacilityLoading]=useState(false),[facilityError,setFacilityError]=useState(''),[facilityQuery,setFacilityQuery]=useState('');
- const [authLoading,setAuthLoading]=useState(true),[authError,setAuthError]=useState(''),[adminUsers,setAdminUsers]=useState<any[]>([]),[csrfToken,setCsrfToken]=useState(''),[setupRequired,setSetupRequired]=useState(false),[setupTokenConfigured,setSetupTokenConfigured]=useState(false),[setupToken,setSetupToken]=useState(''),[setupName,setSetupName]=useState(''),[setupEmail,setSetupEmail]=useState(''),[setupPassword,setSetupPassword]=useState(''),[loginEmail,setLoginEmail]=useState(''),[loginPassword,setLoginPassword]=useState('');
- const [userDraft,setUserDraft]=useState({email:'',fullName:'',role:'operator' as 'admin'|'operator'|'analyst',isActive:true,allFacilities:false,facilityCodes:'',password:''});
- const emptyAstRow:Row={Hospital_ID:'',Hospital_Name:'',Region_Oblast:'Тернопільська',Territorial_Hromada:'',Settlement:'',Patient_ID:'',Sample_ID:'',Sampling_Date:'',Sample_Matrix_Type:'',Bacterial_Species:'',Antimicrobial_Agent:'',MIC_Operator:'=',MIC_Value:'',Zone_Diameter:'',SIR_Category:'',Interpretation_Standard:'EUCAST'};
- const [manualRow,setManualRow]=useState<Row>(emptyAstRow);
- const fileRef=useRef<HTMLInputElement>(null);
- const manualFields:[keyof Row,string,string?][]=[['Hospital_ID','Код закладу'],['Hospital_Name','Назва закладу'],['Region_Oblast','Область'],['Territorial_Hromada','Територіальна громада'],['Settlement','Населений пункт'],['Patient_ID','Ідентифікатор пацієнта'],['Sample_ID','Sample ID'],['Sampling_Date','Дата забору','date'],['Sample_Matrix_Type','Матеріал'],['Bacterial_Species','Мікроорганізм'],['Antimicrobial_Agent','Антимікробний препарат'],['MIC_Operator','Оператор MIC'],['MIC_Value','Значення MIC'],['Zone_Diameter','Діаметр зони'],['SIR_Category','Категорія S / I / R'],['Interpretation_Standard','Стандарт інтерпретації']];
- const title=nav.find(n=>n.id===tab)?.label||'Огляд системи';
- const visibleFacilities=useMemo(()=>facilities.filter(f=>[f.edrpou,f.name,f.oblast,f.district,f.hromada,f.settlement,f.care_level,f.network_status].join(' ').toLocaleLowerCase('uk').includes(facilityQuery.toLocaleLowerCase('uk'))),[facilities,facilityQuery]);
- const baseFiltered=useMemo(()=>rows.filter(r=>[r.Hospital_Name,r.Bacterial_Species,r.Antimicrobial_Agent,r.Sample_ID,r.SIR_Category].join(' ').toLowerCase().includes(query.toLowerCase())&&(speciesFilter==='all'||r.Bacterial_Species===speciesFilter)&&(agentFilter==='all'||r.Antimicrobial_Agent===agentFilter)&&(sirFilter==='all'||r.SIR_Category.toUpperCase()===sirFilter)),[rows,query,speciesFilter,agentFilter,sirFilter]);
- const communityStats=useMemo(()=>COMMUNITY_SHAPES.map(shape=>{const matched=baseFiltered.filter(r=>normalizeArea(r.Territorial_Hromada)===normalizeArea(shape.name));return{name:shape.name,total:matched.length,samples:new Set(matched.map(r=>r.Sample_ID)).size,resistant:matched.filter(r=>r.SIR_Category.toUpperCase()==='R').length};}),[baseFiltered]);
- const districtStats=useMemo(()=>DISTRICT_SHAPES.map(shape=>{const communityNames=COMMUNITY_SHAPES.filter(c=>c.district===shape.name).map(c=>normalizeArea(c.name));const matched=baseFiltered.filter(r=>communityNames.includes(normalizeArea(r.Territorial_Hromada)));return{name:shape.name,total:matched.length,samples:new Set(matched.map(r=>r.Sample_ID)).size,resistant:matched.filter(r=>r.SIR_Category.toUpperCase()==='R').length};}),[baseFiltered]);
- const filtered=useMemo(()=>baseFiltered.filter(r=>{if(selectedCommunity!=='all')return normalizeArea(r.Territorial_Hromada)===normalizeArea(selectedCommunity);if(selectedDistrict!=='all'){const c=COMMUNITY_SHAPES.find(shape=>normalizeArea(shape.name)===normalizeArea(r.Territorial_Hromada));return c?.district===selectedDistrict;}return true;}),[baseFiltered,selectedDistrict,selectedCommunity]);
- const loadFile=async(file?:File)=>{
-  if(!file)return;
-  try{
-   const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});
-   const ws=wb.Sheets[wb.SheetNames[0]];
-   const raw=XLSX.utils.sheet_to_json<Record<string,unknown>>(ws,{defval:''});
-   const missing=required.filter(k=>!Object.keys(raw[0]||{}).includes(k));
-   if(missing.length){setNotice('Імпорт відхилено. Відсутні колонки: '+missing.join(', '));return;}
-   const parsed=raw.map(r=>Object.fromEntries(required.map(k=>[k,String(r[k]??'')])) as unknown as Row);
-   if(!parsed.length){setNotice('У файлі немає рядків із Sample_ID та Bacterial_Species.');return;}
-   setNotice('Передавання '+parsed.length+' рядків до D1…');
-   const response=await fetch('/api/amr/ast/import',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({sourceName:file.name,rows:parsed})});
-   const result=await readApiJson<{status?:string;rowsProcessed?:number;rowsRejected?:number;message?:string;error?:string}>(response);
-   if(!response.ok){setNotice('Імпорт не виконано: '+(result.message||result.error||('HTTP '+response.status)));return;}
-   await loadFromD1(false);
-   setNotice('Імпорт завершено. Опрацьовано: '+(result.rowsProcessed??parsed.length)+', відхилено: '+(result.rowsRejected??0)+'.');
-   setTab('amr');
-  }catch(error){setNotice('Не вдалося прочитати файл або зберегти дані: '+(error instanceof Error?error.message:String(error)));}
- };
- const exportFile=()=>{const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'AMR_AST');XLSX.writeFile(wb,'AMR_AST_export.xlsx');};
- const downloadTemplate=()=>{
-  const wb=XLSX.utils.book_new();
-  const dataSheet=XLSX.utils.aoa_to_sheet([required]);
-  dataSheet['!autofilter']={ref:'A1:P1'};
-  XLSX.utils.book_append_sheet(wb,dataSheet,'AMR_AST');
-  const instructions=[
-   ['Інструкція до шаблону AMR AST'],
-   ['Поле','Вимога / пояснення'],
-   ['Hospital_ID','Стабільний код закладу; має збігатися з кодом, призначеним у профілі користувача.'],
-   ['Patient_ID','Внутрішній ідентифікатор пацієнта; на сервері буде перетворений на HMAC-псевдонім.'],
-   ['Sample_ID','Стабільний код зразка.'],
-   ['Sampling_Date','Дата у форматі YYYY-MM-DD.'],
-   ['MIC_Operator','Один із символів: =, <, >, <=, >=, ≤, ≥.'],
-   ['MIC_Value','Числове або лабораторне значення MIC; оператор зберігається окремо.'],
-   ['Zone_Diameter','Діаметр зони, якщо застосовується метод диско-дифузії.'],
-   ['SIR_Category','Лише S, I або R; не об’єднувати категорії.'],
-   ['Interpretation_Standard','Зазначати стандарт і версію інтерпретації, наприклад EUCAST 2026.'],
-   ['Загальні правила','Не перейменовувати й не видаляти колонки. Один рядок — один результат для ізоляту та антимікробного препарату.'],
-   ['Імпорт','Система перевіряє структуру та дозволений для користувача код закладу перед записом у D1.']
+  const [tab,setTab]=useState<Tab>('overview');
+  const [mobile,setMobile]=useState(false);
+  const [user,setUser]=useState<AppUser|null>(null);
+  const [googleProfile,setGoogleProfile]=useState<GoogleProfile|null>(null);
+  const [authLoading,setAuthLoading]=useState(false);
+  const [authError,setAuthError]=useState('');
+  const [notice,setNotice]=useState('Увійдіть через Google, щоб підключити робочу книгу.');
+  const [sheets,setSheets]=useState<Partial<Record<GoogleSheetTab,SheetState>>>({});
+  const [loading,setLoading]=useState(false);
+  const [query,setQuery]=useState('');
+  const [facilityQuery,setFacilityQuery]=useState('');
+  const [draft,setDraft]=useState<SheetRecord>({});
+  const [showForm,setShowForm]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [selectedDistrict,setSelectedDistrict]=useState('all');
+  const [selectedCommunity,setSelectedCommunity]=useState('all');
+  const fileRef=useState<HTMLInputElement|null>(null);
+  const title=TAB_LABELS[tab];
+  const activeSheet=SHEET_BY_TAB[tab];
+  const current=sheets[activeSheet||'AST_Data']||{headers:[],rows:[]};
+  const visibleRows=useMemo(()=>current.rows.filter(row=>Object.values(row).join(' ').toLocaleLowerCase('uk').includes(query.toLocaleLowerCase('uk'))),[current.rows,query]);
+  const facilities=(sheets.Facilities?.rows||[]).map(facility).filter(row=>row.edrpou||row.name);
+  const visibleFacilities=facilities.filter(row=>Object.values(row).join(' ').toLocaleLowerCase('uk').includes(facilityQuery.toLocaleLowerCase('uk')));
+  const astRows=(sheets.AST_Data?.rows||[]).map(parseAst);
+  const filteredAst=astRows.filter(row=>Object.values(row).join(' ').toLocaleLowerCase('uk').includes(query.toLocaleLowerCase('uk')));
+  const communities=useMemo(()=>COMMUNITY_SHAPES.map(shape=>{const matched=filteredAst.filter(row=>mapArea(row.Territorial_Hromada)===mapArea(shape.name));return{name:shape.name,total:matched.length,samples:new Set(matched.map(row=>row.Sample_ID)).size,resistant:matched.filter(row=>row.SIR_Category.toUpperCase()==='R').length};}),[filteredAst]);
+  const districts=useMemo(()=>DISTRICT_SHAPES.map(shape=>{const names=COMMUNITY_SHAPES.filter(c=>c.district===shape.name).map(c=>mapArea(c.name));const matched=filteredAst.filter(row=>names.includes(mapArea(row.Territorial_Hromada)));return{name:shape.name,total:matched.length,samples:new Set(matched.map(row=>row.Sample_ID)).size,resistant:matched.filter(row=>row.SIR_Category.toUpperCase()==='R').length};}),[filteredAst]);
+  const selectedAst=filteredAst.filter(row=>{
+    if(selectedCommunity!=='all')return mapArea(row.Territorial_Hromada)===mapArea(selectedCommunity);
+    if(selectedDistrict!=='all')return COMMUNITY_SHAPES.find(c=>mapArea(c.name)===mapArea(row.Territorial_Hromада))?.district===selectedDistrict;
+    return true;
+  });
+
+  const ensureWorkbook=async()=>{
+    await createMissingSheetTabs([...GOOGLE_SHEET_TABS]);
+    const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
+    const missing:string[]=[];
+    for(const name of GOOGLE_SHEET_TABS){
+      let table=await readSheetTable(name);
+      if(!table.headers.length){
+        const headers=DEFAULT_HEADERS[name];
+        await appendSheetRows(name,headers,[headers]);
+        table={headers,rows:[]};
+        missing.push(name);
+      }
+      loaded[name]=table;
+    }
+    setSheets(loaded);
+    return missing;
+  };
+
+  const signIn=async()=>{
+    setAuthLoading(true);setAuthError('');
+    try{
+      await signInWithGoogle();
+      const profile=await getGoogleProfile();
+      const existingTabs=await getSpreadsheetTabs();
+      if(!existingTabs.includes('Users'))await createMissingSheetTabs(['Users']);
+      let users=await readSheetTable('Users');
+      if(!users.headers.length){
+        await appendSheetRows('Users',USER_HEADERS,[USER_HEADERS]);
+        users={headers:USER_HEADERS,rows:[]};
+      }
+      if(!users.rows.length){
+        const bootstrap:SheetRecord={Google_Sub:profile.sub,Email:profile.email.toLowerCase(),Full_Name:profile.name||profile.email,Role:'admin',Is_Active:'TRUE',All_Facilities:'TRUE',Facility_Codes:'',Created_At:new Date().toISOString(),Updated_At:new Date().toISOString()};
+        await appendSheetRows('Users',users.headers,[users.headers.map(h=>getCell(bootstrap,[h]))]);
+        users=await readSheetTable('Users');
+      }
+      const record=users.rows.find(row=>getCell(row,['Email']).toLowerCase()===profile.email.toLowerCase()&&(!getCell(row,['Google_Sub'])||getCell(row,['Google_Sub'])===profile.sub));
+      if(!record)throw new Error('Google-акаунт '+profile.email+' не зареєстрований в аркуші Users. Додайте email та призначте роль.');
+      const appUser=parseUser(record);
+      if(!appUser.isActive)throw new Error('Обліковий запис деактивовано адміністратором.');
+      setGoogleProfile(profile);setUser(appUser);
+      await ensureWorkbook();
+      setAuthError('');
+      setNotice('Підключено Google Sheets · '+profile.email+'. Усі дані читаються безпосередньо з робочої книги.');
+      setTab('overview');
+    }catch(error){
+      clearGoogleSession();setUser(null);setGoogleProfile(null);
+      setAuthError(error instanceof Error?error.message:'Не вдалося підключити Google Sheets.');
+    }finally{setAuthLoading(false);}
+  };
+
+  const refreshAll=async()=>{
+    setLoading(true);
+    try{
+      const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
+      for(const name of GOOGLE_SHEET_TABS){
+        const table=await readSheetTable(name);
+        loaded[name]=table;
+      }
+      setSheets(loaded);
+      setNotice('Оновлено всі '+GOOGLE_SHEET_TABS.length+' аркушів Google Sheets.');
+    }catch(error){setNotice('Не вдалося оновити Google Sheets: '+(error instanceof Error?error.message:String(error)));}
+    finally{setLoading(false);}
+  };
+
+  const signOut=()=>{
+    clearGoogleSession();setUser(null);setGoogleProfile(null);setSheets({});setTab('overview');
+    setNotice('Сеанс Google завершено.');
+  };
+
+  const saveRecord=async(sheet:GoogleSheetTab,record:SheetRecord)=>{
+    const table=sheets[sheet];
+    if(!table?.headers.length)throw new Error('Не знайдено заголовки колонок на аркуші '+sheet+'.');
+    const values=table.headers.map(header=>record[header]??'');
+    await appendSheetRows(sheet,table.headers,[values]);
+    const updated=await readSheetTable(sheet);
+    setSheets(previous=>({...previous,[sheet]:updated}));
+  };
+
+  const addGenericRecord=async(event:FormEvent)=>{
+    event.preventDefault();
+    if(!activeSheet)return;
+    setSaving(true);
+    try{
+      await saveRecord(activeSheet,draft);
+      setDraft({});setShowForm(false);setNotice('Новий запис додано до аркуша '+activeSheet+'.');
+    }catch(error){setNotice('Не вдалося записати дані: '+(error instanceof Error?error.message:String(error)));}
+    finally{setSaving(false);}
+  };
+
+  const importAst=async(file?:File)=>{
+    if(!file)return;
+    setSaving(true);
+    try{
+      const workbook=XLSX.read(await file.arrayBuffer(),{type:'array'});
+      const worksheet=workbook.Sheets[workbook.SheetNames[0]];
+      const raw=XLSX.utils.sheet_to_json<SheetRecord>(worksheet,{defval:''});
+      const sourceHeaders=Object.keys(raw[0]||{});
+      const missing=AST_HEADERS.filter(header=>!sourceHeaders.some(key=>norm(key)===norm(header)));
+      if(missing.length)throw new Error('В Excel відсутні обов’язкові колонки: '+missing.join(', '));
+      const normalized=raw.map(item=>{
+        const row=parseAst(Object.fromEntries(Object.entries(item).map(([k,v])=>[k,String(v??'')])));
+        if(REQUIRED_AST.some(key=>!row[key]))throw new Error('Є рядок без обов’язкового поля '+REQUIRED_AST.find(key=>!row[key])+'.');
+        if(row.SIR_Category&&!['S','I','R'].includes(row.SIR_Category.toUpperCase()))throw new Error('SIR_Category має містити S, I або R.');
+        row.SIR_Category=row.SIR_Category.toUpperCase();
+        return row;
+      });
+      if(!normalized.length)throw new Error('У файлі немає записів.');
+      const table=sheets.AST_Data;
+      if(!table?.headers.length)throw new Error('Аркуш AST_Data не має заголовків.');
+      await appendSheetRows('AST_Data',table.headers,normalized.map(row=>table.headers.map(header=>String((row as unknown as SheetRecord)[header]??''))));
+      const updated=await readSheetTable('AST_Data');
+      setSheets(previous=>({...previous,AST_Data:updated}));
+      setNotice('Імпортовано '+normalized.length+' результатів безпосередньо до Google Sheets.');
+      setTab('amr');
+    }catch(error){setNotice('Імпорт відхилено: '+(error instanceof Error?error.message:String(error)));}
+    finally{setSaving(false);}
+  };
+
+  const exportAst=()=>{
+    const workbook=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook,XLSX.utils.json_to_sheet(astRows),'AMR_AST');
+    XLSX.writeFile(workbook,'AMR_AST_export.xlsx');
+  };
+
+  const addUser=async(event:FormEvent)=>{
+    event.preventDefault();
+    if(!user||user.role!=='admin')return;
+    const table=sheets.Users;
+    if(!table?.headers.length)throw new Error('Аркуш Users не має заголовків.');
+    const email=String(draft.Email||'').trim().toLowerCase();
+    if(!email)throw new Error('Email обов’язковий.');
+    if(table.rows.some(row=>getCell(row,['Email']).toLowerCase()===email))throw new Error('Користувач з таким email уже є.');
+    const row:SheetRecord={Google_Sub:'',Email:email,Full_Name:String(draft.Full_Name||''),Role:String(draft.Role||'analyst'),Is_Active:String(draft.Is_Active||'TRUE'),All_Facilities:String(draft.All_Facilities||'FALSE'),Facility_Codes:String(draft.Facility_Codes||''),Created_At:new Date().toISOString(),Updated_At:new Date().toISOString()};
+    await saveRecord('Users',row);
+    setDraft({});setShowForm(false);setNotice('Додано профіль '+email+'. Надалі потрібно надати цьому акаунту доступ до Google-книги у Drive.');
+  };
+
+  const downloadAstTemplate=()=>{
+    const workbook=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([AST_HEADERS]),'AST_Data');
+    XLSX.writeFile(workbook,'AST_Data_template.xlsx');
+  };
+
+  if(!user){
+    return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>IPC & AMR Monitoring</h1>
+      {authLoading?<p>Підключення Google Sheets…</p>:<><p>{authError||'Увійдіть через Google, щоб працювати з єдиною книгою IPC та AMR.'}</p>
+      <button className="primary" disabled={!googleClientConfigured()} onClick={()=>void signIn()}>{googleClientConfigured()?'Увійти через Google':'Потрібно налаштувати OAuth Client ID'}</button>
+      {!googleClientConfigured()&&<small>Збірці потрібен публічний VITE_GOOGLE_CLIENT_ID. Це ідентифікатор OAuth-застосунку, не секрет і не пароль.</small>}
+      <small>Google-акаунт повинен мати доступ до робочої книги в Google Drive. Після входу роль перевіряється за аркушем Users.</small></>}
+    </div></div>;
+  }
+
+  const nav:Array<{id:Tab;label:string;icon:any;group:string}>=[
+    {id:'overview',label:'Огляд системи',icon:LayoutDashboard,group:'РОБОЧА ПАНЕЛЬ'},
+    {id:'facilities',label:'Реєстр закладів',icon:Building2,group:'РОБОЧА ПАНЕЛЬ'},
+    {id:'visits',label:'Моніторингові візити',icon:CalendarDays,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},
+    {id:'ipc',label:'Оцінювання IPC',icon:ClipboardCheck,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},
+    {id:'training',label:'Навчальні заходи',icon:Users,group:'ІНФЕКЦІЙНИЙ КОНТРОЛЬ'},
+    {id:'amr',label:'Моніторинг AST',icon:Microscope,group:'ЛАБОРАТОРНИЙ НАГЛЯД'},
+    {id:'wgs',label:'Геномний нагляд WGS',icon:Dna,group:'ЛАБОРАТОРНИЙ НАГЛЯД'},
+    {id:'recommendations',label:'Рекомендації',icon:BadgeCheck,group:'ІНСТРУМЕНТИ'},
+    {id:'legal',label:'Моніторинг НПА',icon:FileSpreadsheet,group:'НОРМАТИВНО-ПРАВОВА БАЗА'},
+    {id:'imports',label:'Імпорт даних',icon:ArrowUpFromLine,group:'ІНСТРУМЕНТИ'},
+    {id:'users',label:'Користувачі та доступ',icon:Users,group:'АДМІНІСТРУВАННЯ'},
   ];
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(instructions),'Інструкція');
-  XLSX.writeFile(wb,'AMR_AST_template.xlsx');
- };
- const loadFromD1=async(activate=true)=>{
-  try{
-   const response=await fetch('/api/amr/ast?limit=1000',{credentials:'same-origin',headers:{accept:'application/json'}});
-   const result=await readApiJson<{rows?:Row[];error?:string;message?:string}>(response);
-   if(!response.ok){setNotice('API D1: HTTP '+response.status+' — '+(result.message||result.error||response.statusText));return false;}
-   const saved=result.rows||[];setRows(saved);setNotice('Завантажено з D1: '+saved.length+' результатів AST.');
-   if(activate)setTab('amr');return true;
-  }catch(error){setNotice('Не вдалося завантажити дані з D1: '+(error instanceof Error?error.message:String(error)));return false;}
- };
- const saveManual=async()=>{
-  setNotice('Збереження AST-запису…');
-  try{
-   const response=await fetch('/api/amr/ast/manual',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({sourceName:'Ручне введення AST',rows:[manualRow]})});
-   const result=await readApiJson<{message?:string;error?:string}>(response);
-   if(!response.ok){setNotice('Не вдалося зберегти запис: '+(result.message||result.error||('HTTP '+response.status)));return;}
-   setManualRow(emptyAstRow);await loadFromD1(false);setNotice('AST-запис збережено в D1.');
-  }catch(error){setNotice('Помилка збереження: '+(error instanceof Error?error.message:String(error)));}
- };
- const loadFacilities=async()=>{
-  setFacilityLoading(true);setFacilityError('');
-  try{
-   const response=await fetch('/api/facilities',{credentials:'same-origin',headers:{accept:'application/json'}});
-   const data=await readApiJson<{records?:FacilityRecord[];count?:number;message?:string;error?:string}>(response);
-   if(!response.ok)throw new Error(data.message||data.error||'HTTP '+response.status);
-   setFacilities(Array.isArray(data.records)?data.records:[]);
-   if(!Array.isArray(data.records)||data.records.length===0)setFacilityError('Джерело відповіло, але не повернуло жодного закладу. Перевірте доступність двох вихідних Google-таблиць для серверного XLSX-завантаження та правильність ID аркушів.');
-  }catch(error){
-   setFacilities([]);
-   setFacilityError(error instanceof Error?error.message:'Не вдалося завантажити реєстр закладів.');
-  }finally{setFacilityLoading(false);}
- };
- const loadAdminUsers=async()=>{
-  const response=await fetch('/api/admin/users',{credentials:'same-origin'});
-  const data=await readApiJson<{users?:any[];message?:string}>(response);
-  if(!response.ok)throw new Error(data.message||'Не вдалося отримати перелік профілів.');
-  setAdminUsers(data.users||[]);
- };
- const saveUserProfile=async()=>{
-  const facilityCodes=userDraft.facilityCodes.split(/[,\n;]/).map(x=>x.trim()).filter(Boolean);
-  setNotice('Збереження профілю користувача…');
-  try{
-   const response=await fetch('/api/admin/users',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({...userDraft,facilityCodes})});
-   const data=await readApiJson<{message?:string;error?:string}>(response);
-   if(!response.ok){setNotice('Профіль не збережено: '+(data.message||data.error||('HTTP '+response.status)));return;}
-   await loadAdminUsers();setUserDraft({email:'',fullName:'',role:'operator',isActive:true,allFacilities:false,facilityCodes:'',password:''});
-   setNotice('Профіль збережено. Надайте користувачу пароль і призначені коди закладів.');
-  }catch(error){setNotice('Помилка роботи з профілями: '+(error instanceof Error?error.message:String(error)));}
- };
- const submitLogin=async(event:FormEvent)=>{
-  event.preventDefault();setAuthError('Увійдемо до системи…');
-  try{const response=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({email:loginEmail,password:loginPassword})});const data=await readApiJson<{message?:string;error?:string}>(response);if(!response.ok){setAuthError(data.message||data.error||'Не вдалося увійти.');return;}window.location.reload();}
-  catch(error){setAuthError(error instanceof Error?error.message:'Помилка входу.');}
- };
- const submitSetup=async(event:FormEvent)=>{
-  event.preventDefault();setAuthError('Створення першого адміністратора…');
-  try{const response=await fetch('/api/auth/setup',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({setupToken,email:setupEmail,fullName:setupName,password:setupPassword})});const data=await readApiJson<{message?:string;error?:string}>(response);if(!response.ok){setAuthError(data.message||data.error||'Не вдалося створити адміністратора.');return;}setSetupRequired(false);setLoginEmail(setupEmail);setLoginPassword('');setAuthError('Адміністратора створено. Тепер увійдіть із заданим паролем.');}
-  catch(error){setAuthError(error instanceof Error?error.message:'Помилка створення профілю.');}
- };
- const logout=async()=>{
-  try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin',headers:{'x-csrf-token':csrfToken}});}finally{window.location.reload();}
- };
- // Restore the real session before loading any protected AMR data.
- useEffect(()=>{let alive=true;const initialize=async()=>{
-  try{
-   const statusResponse=await fetch('/api/auth/status',{credentials:'same-origin',headers:{accept:'application/json'}});
-   const status=await readApiJson<{setupRequired?:boolean;setupTokenConfigured?:boolean;message?:string}>(statusResponse);
-   if(!statusResponse.ok)throw new Error(status.message||'Не вдалося перевірити стан авторизації.');
-   if(!alive)return;
-   setSetupRequired(Boolean(status.setupRequired));
-   setSetupTokenConfigured(Boolean(status.setupTokenConfigured));
-   const meResponse=await fetch('/api/auth/me',{credentials:'same-origin',headers:{accept:'application/json'}});
-   if(meResponse.status===401){
-    if(!status.setupRequired)setAuthError('Увійдіть до системи для доступу до даних.');
-    return;
-   }
-   const me=await readApiJson<{user:{id:string;email:string;fullName:string;role:'admin'|'operator'|'analyst';isActive:boolean;allFacilities:boolean;facilityCodes:string[]};csrfToken:string;message?:string}>(meResponse);
-   if(!meResponse.ok)throw new Error(me.message||'Не вдалося перевірити сеанс користувача.');
-   if(!alive)return;
-   setUser(me.user);setCsrfToken(me.csrfToken);
-   setNotice('Авторизовано: '+me.user.fullName);
-   await Promise.all([loadFromD1(false),loadFacilities()]);
-  }catch(error){if(alive)setAuthError(error instanceof Error?error.message:'Помилка ініціалізації авторизації.');}
-  finally{if(alive)setAuthLoading(false);}
- };void initialize();return()=>{alive=false;};},[]);
- const setManualField=(key:keyof Row,value:string)=>setManualRow(current=>({...current,[key]:value}));
- if(authLoading)return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>IPC & AMR Monitoring</h1><p>Перевірка авторизації та профілю користувача…</p></div></div>;
- if(!user)return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>IPC & AMR Monitoring</h1><p>{authError||'Захищений вхід до інформаційно-аналітичної системи.'}</p>{setupRequired?<form onSubmit={submitSetup} className="authform"><h2>Початкове налаштування</h2><label>Одноразовий ключ налаштування<input value={setupToken} onChange={e=>setSetupToken(e.target.value)} type="password" required autoComplete="off"/></label><label>ПІБ адміністратора<input value={setupName} onChange={e=>setSetupName(e.target.value)} required minLength={3}/></label><label>Email<input type="email" value={setupEmail} onChange={e=>setSetupEmail(e.target.value)} required autoComplete="username"/></label><label>Пароль (не менше 12 символів)<input type="password" value={setupPassword} onChange={e=>setSetupPassword(e.target.value)} required minLength={12} autoComplete="new-password"/></label><button className="primary" type="submit" disabled={!setupTokenConfigured}>Створити адміністратора</button></form>:<form onSubmit={submitLogin} className="authform"><h2>Вхід до системи</h2><label>Електронна пошта<input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} required autoComplete="username"/></label><label>Пароль<input type="password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} required autoComplete="current-password"/></label><button className="primary" type="submit">Увійти</button></form>}<small>Доступ надається адміністратором. Сеанс автоматично завершується через 8 годин.</small></div></div>;
- return <div className="shell"><aside className={'sidebar '+(mobile?'open':'')}><div className="brand"><div className="brandmark"><ShieldCheck/></div><div><b>ТЕРНОПІЛЬСЬКИЙ ОЦКПХ</b><small>IPC & AMR MONITORING</small></div><button className="close" onClick={()=>setMobile(false)}><X/></button></div><div className="sideintro">ІНФОРМАЦІЙНО-АНАЛІТИЧНА СИСТЕМА</div>{['РОБОЧА ПАНЕЛЬ','ІНФЕКЦІЙНИЙ КОНТРОЛЬ','ЛАБОРАТОРНИЙ НАГЛЯД','ІНСТРУМЕНТИ','НОРМАТИВНО-ПРАВОВА БАЗА','АДМІНІСТРУВАННЯ'].filter(g=>g!=='АДМІНІСТРУВАННЯ'||user.role==='admin').map(g=><div className="navgroup" key={g}><label>{g}</label>{nav.filter(n=>n.group===g&&(n.id!=='users'||user.role==='admin')).map(n=><button key={n.id} className={'nav '+(tab===n.id?'active':'')} onClick={()=>{setTab(n.id);setMobile(false)}}><n.icon size={17}/>{n.label}</button>)}</div>)}<div className="sidebottom"><ShieldCheck size={16}/> Тимчасовий режим · лише перегляд<small>Версія MVP 0.1.0</small></div></aside>
- <main><header className="topbar"><button className="hamb" onClick={()=>setMobile(true)}><Menu/></button><div>IPC & AMR <span>/</span> {title}</div><div className="topright"><em>ТЕСТОВИЙ ДОСТУП · ЛИШЕ ПЕРЕГЛЯД</em><b>П</b></div></header><div className="page"><div className="pagehead"><div><label>ТЕРНОПІЛЬСЬКИЙ ОБЛАСНИЙ ЦЕНТР КОНТРОЛЮ ТА ПРОФІЛАКТИКИ ХВОРОБ МОЗ УКРАЇНИ</label><h1>{tab==='overview'?'Моніторинг інфекційного контролю та AMR':title}</h1><p>{tab==='overview'?'Єдиний робочий простір для моніторингових візитів, оцінювання IPC та лабораторного нагляду за AMR.':'Облік та аналітика на рівні окремого закладу охорони здоров’я.'}</p></div><button className="btn" onClick={()=>setTab('imports')}><ArrowUpFromLine size={16}/> Імпорт даних</button></div><div className="notice"><AlertCircle size={17}/>{notice}</div>
- {tab==='overview'&&<><div className="section"><div><h2>Робочий огляд</h2><p>Тимчасовий публічний режим перегляду · без внесення змін</p></div><span className="pill">READ ONLY</span></div><div className="modules">{modules.map((m,i)=><button className="module" key={i} onClick={()=>setTab(m.id)}><div className="modicon"><m.icon/></div><div><small>{m.tag}</small><h3>{m.name}</h3><p>{m.desc}</p></div><b>↗</b></button>)}</div><div className="twocol"><section className="panel"><h3>Структура системи</h3><p>Функціональні модулі першого релізу</p>{[['01','Заклади та організаційна структура','Реєстр і профілі ЗОЗ'],['02','Моніторинг інфекційного контролю','Візити, критерії та рекомендації'],['03','Антимікробна резистентність','AST / MIC / S-I-R та WGS'],['04','Управління даними','Excel-імпорт, перевірка, експорт']].map(x=><div className="struct" key={x[0]}><b>{x[0]}</b><span><strong>{x[1]}</strong><small>{x[2]}</small></span><em>Підготовлено</em></div>)}</section><section className="panel"><h3>Принципи MVP</h3><p>Обмеження першого релізу</p>{[['Заклад як одиниця аналізу','Дані переглядаються в межах конкретного ЗОЗ.'],['Без обласних агрегатів','Регіональні показники будуть наступним етапом.'],['Захист даних','Псевдонімізація пацієнтів та контроль доступу.']].map(x=><div className="principle" key={x[0]}><ShieldCheck/><span><b>{x[0]}</b><small>{x[1]}</small></span></div>)}</section></div></>}
- {tab==='amr'&&<><div className="section"><div><h2>Моніторинг антимікробної резистентності</h2><p>Мікробіологічні результати AST та геномний моніторинг WGS</p></div>{user.role!=='analyst'&&<button className="primary" onClick={()=>fileRef.current?.click()}><ArrowUpFromLine size={16}/> Завантажити Excel</button>}</div><div className="filter"><span className="profilehint">Режим: захищений доступ · авторизований користувач</span><button className="btn" onClick={()=>loadFromD1(true)}>Оновити з D1</button><button className="btn" onClick={downloadTemplate}>Завантажити шаблон Excel</button></div><div className="tabs"><b>Мікробіологічний моніторинг</b><span>Геномний моніторинг (WGS)</span><span>Профілі резистентності</span></div>{user.role!=='analyst'&&<section className="panel manual-panel"><div className="paneltitle"><div><h3>Ручне введення результату AST</h3><p>Один запис — один результат для ізоляту та антимікробного препарату</p></div></div><form onSubmit={event=>{event.preventDefault();void saveManual();}}><div className="manual-fields">{manualFields.map(([key,label,type])=><label key={key}>{label}<input type={type||'text'} value={manualRow[key]} onChange={event=>setManualField(key,event.target.value)} required={!['Patient_ID','MIC_Operator','MIC_Value','Zone_Diameter'].includes(key)}/></label>)}</div><button className="primary" type="submit">Зберегти AST-запис у D1</button></form></section>}<div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук за закладом, збудником, препаратом або Sample ID"/></div><button className="btn" onClick={exportFile}><ArrowDownToLine size={16}/> Експорт Excel</button></div><div className="amr-filters"><label>Мікроорганізм<select value={speciesFilter} onChange={e=>setSpeciesFilter(e.target.value)}><option value="all">Усі мікроорганізми</option>{Array.from(new Set(rows.map(r=>r.Bacterial_Species))).sort().map(v=><option key={v} value={v}>{v}</option>)}</select></label><label>Антимікробний препарат<select value={agentFilter} onChange={e=>setAgentFilter(e.target.value)}><option value="all">Усі препарати</option>{Array.from(new Set(rows.map(r=>r.Antimicrobial_Agent))).sort().map(v=><option key={v} value={v}>{v}</option>)}</select></label><label>Категорія S/I/R<select value={sirFilter} onChange={e=>setSirFilter(e.target.value)}><option value="all">Усі категорії</option><option value="S">S — чутливий</option><option value="I">I — чутливий за умови збільшеної експозиції</option><option value="R">R — резистентний</option></select></label><button className="btn" onClick={()=>{setSpeciesFilter('all');setAgentFilter('all');setSirFilter('all');setSelectedDistrict('all');setSelectedCommunity('all');setQuery('');}}>Скинути фільтри</button></div><div className="metrics">{[['Рядки AST',filtered.length],['Види збудників',new Set(filtered.map(r=>r.Bacterial_Species)).size],['Категорія R',filtered.filter(r=>r.SIR_Category.toUpperCase()==='R').length],['Результати WGS','—']].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>{x[0]==='Результати WGS'?'очікують окремого імпорту':'у поточному наборі'}</span></div>)}</div><section className="panel amr-map-panel"><div className="paneltitle"><div><h3>Територіальний розподіл результатів AMR</h3><p>Інтерактивна хороплет-карта за районами та територіальними громадами</p></div><span>{filtered.length} у вибірці</span></div><AmrMap districtStats={districtStats} selectedDistrict={selectedDistrict} onSelectDistrict={name=>{setSelectedDistrict(name);setSelectedCommunity('all');}} communityStats={communityStats} selectedCommunity={selectedCommunity} onSelectCommunity={name=>{setSelectedCommunity(name);setSelectedDistrict('all');}}/><div className="amr-map-selection">{selectedCommunity!=='all'?'Обрана громада: '+selectedCommunity:selectedDistrict!=='all'?'Обраний район: '+selectedDistrict:'Територію не обрано'}</div></section><section className="panel tablepanel"><div className="paneltitle"><div><h3>Результати чутливості до протимікробних препаратів</h3><p>Один запис — один результат AST для ізоляту та препарату</p></div><span>{filtered.length} записів</span></div><div className="tablewrap"><table><thead><tr>{['Sample ID','Заклад','Дата забору','Матеріал','Мікроорганізм','Препарат','MIC','S/I/R','Стандарт'].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{filtered.map((r,i)=><tr key={r.Sample_ID+r.Antimicrobial_Agent+i}><td className="mono">{r.Sample_ID}</td><td>{r.Hospital_Name}</td><td>{r.Sampling_Date}</td><td>{r.Sample_Matrix_Type}</td><td><b>{r.Bacterial_Species}</b></td><td>{r.Antimicrobial_Agent}</td><td className="mono">{r.MIC_Operator}{r.MIC_Value}</td><td><strong className={'sir '+r.SIR_Category.toUpperCase()}>{r.SIR_Category}</strong></td><td>{r.Interpretation_Standard}</td></tr>)}</tbody></table>{!filtered.length&&<div className="empty">За заданими умовами записів не знайдено.</div>}</div><div className="tablefoot">Відображаються дані з D1 у межах прав доступу вашого профілю. Пацієнтські ідентифікатори перед збереженням псевдонімізуються.</div></section><section className="panel wgs"><Dna/><div><h3>Геномний моніторинг WGS</h3><p>Окремий імпорт включатиме Sequencing_Date, Sequencing_Platform, MLST_ST, Serotype_K_O_Antigen, AMR_Genotype_Genes, Point_Mutations, Virulence_Genes, Plasmid_Replicon_Type та FASTA_FASTQ_File_Link. Для зв’язування з фенотипом передбачити Isolate_ID разом із Sample_ID.</p></div></section></>}
- {tab==='users'&&user.role==='admin'&&<><div className="section"><div><h2>Користувачі та права доступу</h2><p>Профілі створює адміністратор. Користувач входить за персональним email і паролем.</p></div><span className="pill">{adminUsers.length} профілів</span></div><section className="panel user-admin"><h3>Створити або оновити профіль</h3><div className="user-fields"><label>ПІБ<input value={userDraft.fullName} onChange={e=>setUserDraft({...userDraft,fullName:e.target.value})} placeholder="Прізвище та ім’я"/></label><label>Електронна пошта<input type="email" value={userDraft.email} onChange={e=>setUserDraft({...userDraft,email:e.target.value})} placeholder="user@example.org" required/></label><label>Роль<select value={userDraft.role} onChange={e=>setUserDraft({...userDraft,role:e.target.value as 'admin'|'operator'|'analyst'})}><option value="operator">Оператор — введення та імпорт</option><option value="analyst">Аналітик — перегляд та експорт</option><option value="admin">Адміністратор — повний доступ</option></select></label><label>Коди закладів<input value={userDraft.facilityCodes} onChange={e=>setUserDraft({...userDraft,facilityCodes:e.target.value})} placeholder="Коди через кому"/></label><label>Пароль користувача<input type="password" value={userDraft.password} onChange={e=>setUserDraft({...userDraft,password:e.target.value})} placeholder="Мінімум 12 символів" autoComplete="new-password"/><small>Обов’язковий для нового профілю. Під час редагування залиште порожнім, щоб не змінювати пароль.</small></label></div><div className="user-options"><label><input type="checkbox" checked={userDraft.allFacilities} onChange={e=>setUserDraft({...userDraft,allFacilities:e.target.checked})}/> Доступ до всіх закладів</label><label><input type="checkbox" checked={userDraft.isActive} onChange={e=>setUserDraft({...userDraft,isActive:e.target.checked})}/> Профіль активний</label></div><button className="primary" onClick={()=>void saveUserProfile()}>Зберегти профіль</button></section><section className="panel tablepanel"><div className="paneltitle"><div><h3>Зареєстровані профілі</h3><p>Деактивація блокує доступ, але не видаляє історію дій</p></div></div><div className="tablewrap"><table><thead><tr><th>ПІБ</th><th>Email</th><th>Роль</th><th>Статус</th><th>Обсяг доступу</th><th></th></tr></thead><tbody>{adminUsers.map(profile=><tr key={profile.id}><td>{profile.fullName}</td><td>{profile.email}</td><td>{profile.role}</td><td>{profile.isActive?'Активний':'Деактивований'}</td><td>{profile.allFacilities?'Усі заклади':profile.facilityCodes.join(', ')||'Не призначено'}</td><td><button className="btn" onClick={()=>setUserDraft({email:profile.email,fullName:profile.fullName,role:profile.role,isActive:profile.isActive,allFacilities:profile.allFacilities,facilityCodes:(profile.facilityCodes||[]).join(', '),password:''})}>Редагувати</button></td></tr>)}</tbody></table>{!adminUsers.length&&<div className="empty">Профілі ще не створені.</div>}</div></section></>} {tab==='training'&&<Training/>}
- {tab==='legal'&&<><div className="section"><div><h2>Моніторинг нормативно-правових актів</h2><p>Реєстр документів, контроль актуальності та відстеження змін у нормативних вимогах</p></div><span className="pill">НОРМАТИВНИЙ НАГЛЯД</span></div><section className="panel"><div className="paneltitle"><div><h3>Реєстр нормативно-правових актів</h3><p>Закони, постанови КМУ, накази МОЗ, санітарні норми, стандарти та методичні документи</p></div></div><div className="tablewrap"><table><thead><tr>{['Вид документа','Номер і дата','Назва документа','Напрям','Статус чинності','Остання перевірка','Наступний перегляд','Відповідальний'].map(x=><th key={x}>{x}</th>)}</tr></thead></table><div className="empty">Реєстр поки порожній. Після узгодження переліку НПА тут відображатимуться документи та їхній статус.</div></div></section><div className="twocol legalgrid"><section className="panel"><h3>Функції розділу</h3>{[['Облік НПА','Назва, вид, номер, дата прийняття та офіційне джерело.'],['Контроль змін','Редакції, зміни, втрата чинності та нові документи.'],['Застосування','Зв’язок документа з IPC, AMR та іншими напрямами.'],['Контроль перегляду','Відповідальний, дата перевірки та наступний термін перегляду.']].map(x=><div className="principle" key={x[0]}><FileSpreadsheet/><span><b>{x[0]}</b><small>{x[1]}</small></span></div>)}</section><section className="panel"><h3>Поля картки нормативного акта</h3><ul className="legalfields">{['Повна назва та вид документа','Номер, дата прийняття і набрання чинності','Орган, що видав документ','Офіційне посилання на джерело','Статус: чинний / змінений / втратив чинність / проєкт','Дата останньої перевірки та наступного перегляду','Напрям застосування та короткий опис вимог','Відповідальний за моніторинг','Історія змін і внутрішні примітки'].map(x=><li key={x}>{x}</li>)}</ul></section></div></>}{tab==='imports'&&<><div className="section"><div><h2>Імпорт та контроль якості даних</h2><p>Захищений імпорт Excel до D1 та пряме читання довідника закладів із Google Sheets</p></div></div>{user.role==='admin'&&<section className="panel rules"><div className="paneltitle"><div><h3>Пряме зчитування Google Sheets</h3><p>Довідник ЗОЗ надходить із двох вихідних Google-таблиць через XLSX export. Підключення працює без service account, API-ключів, приватних ключів і Apps Script.</p></div></div><p>Потрібен доступ до джерел для перегляду без входу в Google. Відкривати таким способом можна лише окремі таблиці, що не містять персональних, пацієнтських або інших обмежених даних. Для безпеки публічне джерело має містити лише організаційні поля, потрібні для реєстру ЗОЗ.</p><p className="profilehint">AST та інші чутливі дані не зчитуються з приватної Google-книги. Їх можна завантажити Excel-файлом або ввести вручну; дані зберігаються в D1, а Patient_ID псевдонімізується на сервері.</p></section>}<div className="importgrid"><section className="panel"><FlaskConical/><h3>AMR — результати AST</h3><p>Шаблон містить 16 колонок. Сервер перевіряє структуру, доступ до закладів і коректність значень перед збереженням у D1.</p>{user.role!=='analyst'&&<><button className="primary" onClick={()=>fileRef.current?.click()}>Обрати Excel-файл</button><button className="btn" onClick={downloadTemplate}>Завантажити шаблон AST</button></>}</section><section className="panel"><Dna/><h3>AMR — результати WGS</h3><p>Поля геномного моніторингу будуть підключені окремим імпортом. Потрібен Isolate_ID для однозначного зв’язку.</p><button className="btn" disabled>Очікує реалізації</button></section><section className="panel"><ClipboardCheck/><h3>IPC — форми моніторингу</h3><p>Поля, критерії та методику оцінювання налаштуємо за фактичними формами після їх отримання.</p><button className="btn" disabled>Очікує форми</button></section></div><section className="panel rules"><h3><AlertCircle size={17}/> Правила імпорту AMR</h3><ul><li>Перевіряються назви всіх обов’язкових колонок.</li><li>MIC_Operator зберігається окремо від MIC_Value.</li><li>Категорії S, I та R не об’єднуються.</li><li>Patient_ID передається серверу для HMAC-псевдонімізації; у D1 зберігається лише псевдонім.</li><li>Файл перевіряється на стороні сервера; після підтвердження прав дані зберігаються у Cloudflare D1.</li></ul></section></>}
-  {tab==='facilities'&&<><div className="section"><div><h2>Реєстр закладів охорони здоров’я</h2><p>Актуальні дані з двох Google Sheets, об’єднані за кодом ЄДРПОУ</p></div><span className="pill">{facilities.length} закладів</span></div><div className="filter"><div><Search size={17}/><input value={facilityQuery} onChange={e=>setFacilityQuery(e.target.value)} placeholder="Пошук за назвою, ЄДРПОУ, районом або громадою"/></div><button className="btn" onClick={()=>void loadFacilities()} disabled={facilityLoading}>{facilityLoading?'Завантаження…':'Оновити перелік'}</button></div>{facilityError&&<div className="notice"><AlertCircle size={17}/>{facilityError}</div>}<div className="metrics">{[['Усього закладів',facilities.length],['Територіальних громад',new Set(facilities.map(f=>f.hromada).filter(Boolean)).size],['Рівень допомоги вказано',facilities.filter(f=>f.care_level).length],['Статус мережі вказано',facilities.filter(f=>f.network_status).length]].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>за даними джерел</span></div>)}</div><section className="panel tablepanel"><div className="paneltitle"><div><h3>Заклади Тернопільської області</h3><p>Інформація оновлюється безпосередньо з вихідних Google Sheets</p></div><span>{visibleFacilities.length} у вибірці</span></div><div className="tablewrap"><table><thead><tr>{['ЄДРПОУ','Назва закладу','Район','Територіальна громада','Населений пункт','Форма власності','Рівень допомоги','Спроможна мережа','Роки моніторингу'].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{visibleFacilities.map((f,i)=><tr key={f.edrpou||i}><td className="mono">{f.edrpou||'—'}</td><td><b>{f.name||'—'}</b></td><td>{f.district||'—'}</td><td>{f.hromada||'—'}</td><td>{f.settlement||'—'}</td><td>{f.ownership||'—'}</td><td>{f.care_level||'—'}</td><td>{f.network_status||'—'}</td><td>{f.monitoring_years||'—'}</td></tr>)}</tbody></table>{!visibleFacilities.length&&<div className="empty">{facilityLoading?'Завантаження переліку закладів…':facilityError?'Не вдалося отримати дані. Перевірте налаштування підключення Google Sheets.':'За заданими умовами закладів не знайдено.'}</div>}</div><div className="tablefoot">Джерело: реєстр ЗОЗ та перелік для моніторингу. Зіставлення виконується за ЄДРПОУ; дублікати в реєстрі не виводяться як достовірні записи.</div></section></>}
- {['visits','ipc','recommendations'].includes(tab)&&<><div className="section"><div><h2>{title}</h2><p>Розділ підготовлено. {tab==='ipc'?'Критерії та методика будуть налаштовані за затвердженою формою моніторингу.':'Після отримання форм буде налаштовано поля, довідники та правила обліку.'}</p></div><span className="pill">ОЧІКУЄ ФОРМИ</span></div><div className="placeholder"><div><Activity/></div><h3>Модуль підготовлено до наповнення</h3><p>Інтерфейс і структура проєкту створюються зараз. Після отримання чинних форм додамо точні поля, критерії, довідники та правила розрахунку — без вигаданих показників.</p><button className="btn" onClick={()=>setTab('imports')}>Перейти до імпорту даних</button></div></>}
- <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={e=>loadFile(e.target.files?.[0])}/><footer>ДУ «Тернопільський обласний центр контролю та профілактики хвороб МОЗ України»<span>IPC & AMR Monitoring · MVP</span></footer></div></main></div>
+  const activeHeaders=activeSheet?sheets[activeSheet]?.headers||[]:[];
+  const canWrite=user.role!=='analyst';
+  const addForm=(sheet:GoogleSheetTab)=>{setDraft(Object.fromEntries((sheets[sheet]?.headers||[]).map(h=>[h,''])));setShowForm(true);};
+  const activeRecords=activeSheet?sheets[activeSheet]?.rows||[]:[];
+  const selectedFacilities=activeSheet==='Facilities'?visibleFacilities:[];
+
+  return <div className="shell">
+    <aside className={'sidebar '+(mobile?'open':'')}>
+      <div className="brand"><div className="brandmark"><ShieldCheck/></div><div><b>ТЕРНОПІЛЬСЬКИЙ ОЦКПХ</b><small>IPC & AMR MONITORING</small></div><button className="close" onClick={()=>setMobile(false)}><X/></button></div>
+      <div className="sideintro">ІНФОРМАЦІЙНО-АНАЛІТИЧНА СИСТЕМА</div>
+      {['РОБОЧА ПАНЕЛЬ','ІНФЕКЦІЙНИЙ КОНТРОЛЬ','ЛАБОРАТОРНИЙ НАГЛЯД','ІНСТРУМЕНТИ','НОРМАТИВНО-ПРАВОВА БАЗА','АДМІНІСТРУВАННЯ'].map(group=><div className="navgroup" key={group}><label>{group}</label>{nav.filter(item=>item.group===group&&(item.id!=='users'||user.role==='admin')).map(item=><button key={item.id} className={'nav '+(tab===item.id?'active':'')} onClick={()=>{setTab(item.id);setMobile(false);setShowForm(false);setQuery('');}}><item.icon size={17}/>{item.label}</button>)}</div>)}
+      <div className="sidebottom"><ShieldCheck size={16}/> Google Sheets · пряме підключення<small>{user.email}</small></div>
+    </aside>
+    <main>
+      <header className="topbar"><button className="hamb" onClick={()=>setMobile(true)}><Menu/></button><div>IPC & AMR <span>/</span> {title}</div><div className="topright"><em>GOOGLE SHEETS</em><b>{(googleProfile?.name||user.fullName||'G').slice(0,1)}</b><button className="btn" onClick={signOut}><LogOut size={15}/> Вийти</button></div></header>
+      <div className="page">
+        <div className="pagehead"><div><label>ТЕРНОПІЛЬСЬКИЙ ОБЛАСНИЙ ЦЕНТР КОНТРОЛЮ ТА ПРОФІЛАКТИКИ ХВОРОБ МОЗ УКРАЇНИ</label><h1>{tab==='overview'?'Моніторинг інфекційного контролю та AMR':title}</h1><p>{tab==='overview'?'Єдиний робочий простір. Усі робочі аркуші підключені безпосередньо до Google Sheets.':'Джерело даних: головна Google-книга IPC & AMR.'}</p></div><button className="btn" onClick={()=>void refreshAll()} disabled={loading}><ArrowDownToLine size={16}/>{loading?'Оновлення…':'Оновити всі дані'}</button></div>
+        <div className="notice"><AlertCircle size={17}/>{notice}</div>
+        {tab==='overview'&&<><div className="section"><div><h2>Робочий огляд</h2><p>Кількість записів безпосередньо в Google Sheets</p></div><span className="pill">LIVE GOOGLE SHEETS</span></div><div className="metrics">{GOOGLE_SHEET_TABS.map(name=><div className="metric" key={name}><small>{name}</small><b>{sheets[name]?.rows.length??0}</b><span>рядків даних</span></div>)}</div><div className="modules">{nav.filter(item=>item.id!=='overview'&&item.id!=='users'&&item.id!=='imports').map(item=><button className="module" key={item.id} onClick={()=>setTab(item.id)}><div className="modicon"><item.icon/></div><div><small>GOOGLE SHEETS</small><h3>{item.label}</h3><p>Читання та запис до відповідного аркуша</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Сховище та контроль доступу</h3><p>Cloudflare D1 вимкнений. Паролі в системі не створюються. Вхід виконується через Google OAuth, а дані читаються й записуються через Google Sheets API без проміжної бази.</p><p><b>Обмеження доступу:</b> Google надає права на всю книгу. Роль у аркуші Users обмежує елементи інтерфейсу, але не створює окремих серверних прав на рядки чи вкладки. Користувач із доступом до книги технічно може переглянути її вкладки через Google Drive/API. Не використовуйте цю конструкцію як межу ізоляції для персональних або клінічно чутливих даних.</p></section></>}
+        {tab==='facilities'&&<><div className="section"><div><h2>Реєстр закладів охорони здоров’я</h2><p>Аркуш Facilities головної Google-книги</p></div><span className="pill">{facilities.length} закладів</span></div><div className="filter"><div><Search size={17}/><input value={facilityQuery} onChange={e=>setFacilityQuery(e.target.value)} placeholder="Пошук за назвою, ЄДРПОУ, районом або громадою"/></div><button className="btn" onClick={()=>void refreshAll()} disabled={loading}>Оновити</button></div><div className="metrics">{[['Заклади',facilities.length],['Громади',new Set(facilities.map(f=>f.hromada).filter(Boolean)).size],['Рівень допомоги',facilities.filter(f=>f.care_level).length],['Мережа',facilities.filter(f=>f.network_status).length]].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>з Google Sheets</span></div>)}</div><section className="panel tablepanel"><div className="paneltitle"><div><h3>Заклади Тернопільської області</h3><p>Редагуйте довідник безпосередньо у Google Sheets</p></div><span>{selectedFacilities.length} записів</span></div><div className="tablewrap"><table><thead><tr>{['ЄДРПОУ','Назва закладу','Район','Громада','Населений пункт','Власність','Рівень допомоги','Спроможна мережа'].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{selectedFacilities.map((f,i)=><tr key={f.edrpou||i}><td>{f.edrpou}</td><td><b>{f.name}</b></td><td>{f.district}</td><td>{f.hromada}</td><td>{f.settlement}</td><td>{f.ownership}</td><td>{f.care_level}</td><td>{f.network_status}</td></tr>)}</tbody></table>{!selectedFacilities.length&&<div className="empty">Аркуш Facilities не містить рядків або запит не повернув даних.</div>}</div></section></>}
+        {(tab==='amr'||tab==='wgs')&&<><div className="section"><div><h2>{tab==='amr'?'Моніторинг антимікробної резистентності AST':'Геномний нагляд WGS'}</h2><p>Пряме читання та запис у {activeSheet}</p></div>{canWrite&&<button className="primary" onClick={()=>fileRef.current?.click()}><ArrowUpFromLine size={16}/> Завантажити Excel</button>}</div><div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук у поточному аркуші"/></div><button className="btn" onClick={exportAst}><ArrowDownToLine size={16}/> Експорт AST</button><button className="btn" onClick={downloadAstTemplate}>Шаблон AST</button>{canWrite&&<button className="btn" onClick={()=>addForm(activeSheet!)}><Plus size={16}/> Додати запис</button>}</div>{tab==='amr'&&<><div className="metrics">{[['Результати AST',astRows.length],['Мікроорганізми',new Set(astRows.map(r=>r.Bacterial_Species)).size],['Категорія R',astRows.filter(r=>r.SIR_Category.toUpperCase()==='R').length],['WGS',sheets.WGS_Staging?.rows.length??0]].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>з Google Sheets</span></div>)}</div><section className="panel amr-map-panel"><div className="paneltitle"><div><h3>Територіальний розподіл результатів AMR</h3><p>Дані згруповані за територіальними громадами</p></div></div><AmrMap districtStats={districts} selectedDistrict={selectedDistrict} onSelectDistrict={name=>{setSelectedDistrict(name);setSelectedCommunity('all');}} communityStats={communities} selectedCommunity={selectedCommunity} onSelectCommunity={name=>{setSelectedCommunity(name);setSelectedDistrict('all');}}/><div className="amr-map-selection">{selectedCommunity!=='all'?'Обрана громада: '+selectedCommunity:selectedDistrict!=='all'?'Обраний район: '+selectedDistrict:'Територію не обрано'}</div></section></>}{showForm&&<form className="panel manual-panel" onSubmit={addGenericRecord}><div className="paneltitle"><div><h3>Новий запис у {activeSheet}</h3><p>Поля відповідають заголовкам активного аркуша</p></div></div><div className="manual-fields">{activeHeaders.map(header=><label key={header}>{header}<input value={draft[header]||''} onChange={e=>setDraft(current=>({...current,[header]:e.target.value}))}/></label>)}</div><button className="primary" type="submit" disabled={saving}>{saving?'Запис…':'Зберегти в Google Sheets'}</button></form>}<section className="panel tablepanel"><div className="paneltitle"><div><h3>Записи {activeSheet}</h3><p>Поточні дані з робочої книги</p></div><span>{visibleRows.length} рядків</span></div><div className="tablewrap"><table><thead><tr>{activeHeaders.map(header=><th key={header}>{header}</th>)}</tr></thead><tbody>{visibleRows.map((row,i)=><tr key={i}>{activeHeaders.map(header=><td key={header}>{row[header]||'—'}</td>)}</tr>)}</tbody></table>{!visibleRows.length&&<div className="empty">Дані не знайдені.</div>}</div></section></>}
+        {['visits','ipc','training','recommendations','legal'].includes(tab)&&activeSheet&&<><div className="section"><div><h2>{title}</h2><p>Робочий аркуш {activeSheet} у головній Google-книзі</p></div><span className="pill">{activeRecords.length} записів</span></div><div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук записів"/></div>{canWrite&&<button className="primary" onClick={()=>addForm(activeSheet)}><Plus size={16}/> Додати запис</button>}</div>{showForm&&<form className="panel manual-panel" onSubmit={addGenericRecord}><div className="paneltitle"><div><h3>Новий запис · {activeSheet}</h3><p>Значення буде додано безпосередньо в Google Sheets</p></div></div><div className="manual-fields">{activeHeaders.map(header=><label key={header}>{header}<input value={draft[header]||''} onChange={e=>setDraft(current=>({...current,[header]:e.target.value}))}/></label>)}</div><button className="primary" disabled={saving} type="submit">Зберегти запис</button></form>}<section className="panel tablepanel"><div className="tablewrap"><table><thead><tr>{activeHeaders.map(header=><th key={header}>{header}</th>)}</tr></thead><tbody>{visibleRows.map((row,i)=><tr key={i}>{activeHeaders.map(header=><td key={header}>{row[header]||'—'}</td>)}</tr>)}</tbody></table>{!visibleRows.length&&<div className="empty">У цьому аркуші поки немає записів.</div>}</div></section></>}
+        {tab==='imports'&&<><div className="section"><div><h2>Імпорт та контроль якості даних</h2><p>Завантаження даних безпосередньо до Google Sheets</p></div></div><div className="modules">{(['AST_Data','WGS_Staging','IPC_Assessments','Training_Events','Legal_Acts'] as GoogleSheetTab[]).map(name=><button className="module" key={name} onClick={()=>{setTab(name==='AST_Data'?'amr':name==='WGS_Staging'?'wgs':name==='IPC_Assessments'?'ipc':name==='Training_Events'?'training':'legal');setShowForm(false);}}><div className="modicon"><FileSpreadsheet/></div><div><small>GOOGLE SHEETS</small><h3>{name}</h3><p>{sheets[name]?.rows.length??0} записів</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Правила роботи з чутливими даними</h3><p>Не завантажуйте ПІБ, номери медичних карт або інші прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте попередньо погоджений псевдонім. Google Sheets API записує дані безпосередньо в книгу; окремої серверної псевдонімізації більше немає.</p></section></>}
+        {tab==='users'&&user.role==='admin'&&<><div className="section"><div><h2>Користувачі та доступ</h2><p>Профілі Google-акаунтів зберігаються на аркуші Users</p></div><span className="pill">{sheets.Users?.rows.length??0} профілів</span></div><section className="panel user-admin"><h3>Додати користувача</h3><form onSubmit={addUser}><div className="user-fields"><label>Email Google<input type="email" required value={draft.Email||''} onChange={e=>setDraft(d=>({...d,Email:e.target.value}))}/></label><label>ПІБ<input value={draft.Full_Name||''} onChange={e=>setDraft(d=>({...d,Full_Name:e.target.value}))}/></label><label>Роль<select value={draft.Role||'analyst'} onChange={e=>setDraft(d=>({...d,Role:e.target.value}))}><option value="operator">Оператор</option><option value="analyst">Аналітик</option><option value="admin">Адміністратор</option></select></label><label>Доступні коди закладів<input value={draft.Facility_Codes||''} onChange={e=>setDraft(d=>({...d,Facility_Codes:e.target.value}))} placeholder="Через кому або крапку з комою"/></label></div><div className="user-options"><label><input type="checkbox" checked={(draft.Is_Active||'TRUE')==='TRUE'} onChange={e=>setDraft(d=>({...d,Is_Active:e.target.checked?'TRUE':'FALSE'}))}/> Активний</label><label><input type="checkbox" checked={draft.All_Facilities==='TRUE'} onChange={e=>setDraft(d=>({...d,All_Facilities:e.target.checked?'TRUE':'FALSE'}))}/> Усі заклади</label></div><button className="primary" type="submit" disabled={saving}>Додати профіль</button></form></section><section className="panel tablepanel"><div className="tablewrap"><table><thead><tr>{USER_HEADERS.map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{(sheets.Users?.rows||[]).map((row,i)=><tr key={i}>{USER_HEADERS.map(h=><td key={h}>{row[h]||'—'}</td>)}</tr>)}</tbody></table></div></section><section className="panel rules"><p>Для входу кожен працівник використовує свій Google-акаунт. Адміністратор додає його email до Users, а власник книги окремо надає цьому акаунту доступ у Google Drive. Роль у Users визначає інтерфейс застосунку, але не обмежує прямий доступ до всієї книги в Google Sheets.</p></section></>}
+        <input ref={node=>{if(node)fileRef[0]=node;}} type="file" accept=".xlsx,.xls,.csv" hidden onChange={event=>void importAst(event.target.files?.[0])}/>
+        <footer>ДУ «Тернопільський обласний центр контролю та профілактики хвороб МОЗ України»<span>IPC & AMR Monitoring · Google Sheets</span></footer>
+      </div>
+    </main>
+  </div>;
 }
