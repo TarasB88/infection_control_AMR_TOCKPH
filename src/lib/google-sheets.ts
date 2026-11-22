@@ -80,7 +80,6 @@ export const GOOGLE_SHEET_TABS = [
   'AST_Data',
   'WGS_Staging',
   'Dictionaries',
-  'Users',
 ] as const;
 export type GoogleSheetTab = typeof GOOGLE_SHEET_TABS[number];
 
