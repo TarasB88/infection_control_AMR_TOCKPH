@@ -358,7 +358,7 @@ function getMergedFacilityRecords_() {
     }
   });
 
-  const allIds = new Set(Object.keys(registryById).concat(Object.keys(monitoringById)));
+  const allIds = new Set(Object.keys(registryById).concat(Object.keys(monitoringById).filter(edrpou => !duplicateRegistrySet.has(edrpou))));
   const records = [];
   let incompleteRows = 0;
   allIds.forEach(edrpou => {
@@ -421,7 +421,7 @@ function buildFacilitiesSyncReport_(targetBook, commit) {
     const record = item.record;
     if (!duplicateRegistrySet.has(record.edrpou)) registryById[record.edrpou] = record;
   });
-  const allIds = new Set(Object.keys(registryById).concat(Object.keys(monitoringById)));
+  const allIds = new Set(Object.keys(registryById).concat(Object.keys(monitoringById).filter(edrpou => !duplicateRegistrySet.has(edrpou))));
   const records = [];
   let incompleteRows = 0;
   allIds.forEach(edrpou => {
