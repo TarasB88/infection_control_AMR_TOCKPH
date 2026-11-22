@@ -37,6 +37,22 @@ async function readTable(e:Env,s:Sheet){
  const rows=v.slice(1).map((a,idx)=>{const o:Record<string,string>={__rowNumber:String(idx+2)};headers.forEach((h,i)=>o[h]=String(a[i]??'').trim());return o;}).filter(o=>headers.some(h=>o[h]!==''));
  return{headers,rows};
 }
+type UserTable=Awaited<ReturnType<typeof readTable>>;
+let usersCache:{table:UserTable;expires:number}|null=null;
+let usersPending:Promise<UserTable>|null=null;
+async function readUsers(e:Env):Promise<UserTable>{
+ if(usersCache&&usersCache.expires>Date.now())return usersCache.table;
+ if(usersPending)return usersPending;
+ const pending=readUsers(e);
+ usersPending=pending;
+ try{
+  const table=await pending;
+  usersCache={table,expires:Date.now()+5000};
+  return table;
+ }finally{
+  if(usersPending===pending)usersPending=null;
+ }
+}
 const col=(n:number)=>{let s='';while(n){const r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26);}return s;};
 async function append(e:Env,s:Sheet,h:string[],rows:unknown[][]){
  if(!rows.length)return;const t=await googleToken(e),range="'"+s+"'!A:"+col(h.length);
@@ -79,7 +95,7 @@ async function session(req:Request,e:Env):Promise<User|null>{
 }
 async function liveSession(req:Request,e:Env):Promise<User|null>{
  const signed=await session(req,e);if(!signed)return null;
- const t=await readTable(e,'Users'),row=t.rows.find(r=>String(r.Username||'').toLowerCase()===signed.username.toLowerCase());
+ const t=await readUsers(e),row=t.rows.find(r=>String(r.Username||'').toLowerCase()===signed.username.toLowerCase());
  return row&&yes(row.Is_Active)?toUser(row):null;
 }
 const cookie=(v:string,age=28800)=>'ipc_session='+v+'; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age='+age;
@@ -104,7 +120,7 @@ async function handle(req:Request,e:Env):Promise<Response>{
    e.LOGIN_PAIR_LIMITER.limit({key:ipKey+':'+name})
   ]);
   if(!ipLimit.success||!usernameLimit.success)return reply({error:'Забагато спроб входу. Спробуйте ще раз через хвилину.'},429,{'Retry-After':'60'});
-  const table=await readTable(e,'Users');
+  const table=await readUsers(e);
   if(!table.rows.length&&e.BOOTSTRAP_ADMIN_USERNAME&&e.BOOTSTRAP_ADMIN_PASSWORD_HASH){
    if(!table.headers.length)throw Error('Спочатку додайте рядок заголовків до аркуша Users.');
    const now=new Date().toISOString(),r:Record<string,string>={User_ID:crypto.randomUUID(),Username:e.BOOTSTRAP_ADMIN_USERNAME,Email:'',Display_Name:e.BOOTSTRAP_ADMIN_DISPLAY_NAME||'Адміністратор',Password_Hash:e.BOOTSTRAP_ADMIN_PASSWORD_HASH,Role:'admin',All_Facilities:'TRUE',Facility_Codes:'',Is_Active:'TRUE',Must_Change_Password:'TRUE',Created_At:now,Updated_At:now,Last_Login_At:''};
@@ -125,7 +141,7 @@ async function handle(req:Request,e:Env):Promise<Response>{
  if(p==='/api/auth/change-password'&&req.method==='POST'){
   const b=await req.json() as {currentPassword?:string;newPassword?:string},current=String(b.currentPassword||''),next=String(b.newPassword||'');
   if(next.length<12||next.length>128)return reply({error:'Новий пароль має містити від 12 до 128 символів.'},400);
-  const t=await readTable(e,'Users'),r=t.rows.find(x=>String(x.Username||'').toLowerCase()===u.username.toLowerCase());
+  const t=await readUsers(e),r=t.rows.find(x=>String(x.Username||'').toLowerCase()===u.username.toLowerCase());
   if(!r||!await passwordOK(current,r.Password_Hash||''))return reply({error:'Поточний пароль неправильний.'},401);
   r.Password_Hash=await passwordHash(next);r.Must_Change_Password='FALSE';r.Updated_At=new Date().toISOString();
   await update(e,'Users',Number(r.__rowNumber)||t.rows.indexOf(r)+2,t.headers,t.headers.map(h=>r[h]??''));
@@ -174,10 +190,10 @@ async function handle(req:Request,e:Env):Promise<Response>{
   if(!/^[a-z0-9._-]{3,40}$/.test(username))return reply({error:'Логін має містити 3–40 символів латиниці, цифр, крапки, дефіса або підкреслення.'},400);
   if(pass.length<12||pass.length>128)return reply({error:'Початковий пароль має містити від 12 до 128 символів.'},400);
   if(!['admin','operator','analyst'].includes(String(b.role)))return reply({error:'Невідома роль.'},400);
-  const t=await readTable(e,'Users');if(!t.headers.length)return reply({error:'У Users відсутній рядок заголовків.'},400);
+  const t=await readUsers(e);if(!t.headers.length)return reply({error:'У Users відсутній рядок заголовків.'},400);
   if(t.rows.some(r=>String(r.Username||'').toLowerCase()===username))return reply({error:'Такий логін уже існує.'},409);
   const now=new Date().toISOString(),r:Record<string,string>={User_ID:crypto.randomUUID(),Username:username,Email:String(b.email||''),Display_Name:String(b.displayName||username),Password_Hash:await passwordHash(pass),Role:String(b.role),All_Facilities:b.allFacilities?'TRUE':'FALSE',Facility_Codes:(b.facilityCodes||[]).join(';'),Is_Active:b.isActive===false?'FALSE':'TRUE',Must_Change_Password:'TRUE',Created_At:now,Updated_At:now,Last_Login_At:'',Notes:''};
-  await append(e,'Users',t.headers,[t.headers.map(h=>r[h]??'')]);return reply({ok:true},201);
+  await append(e,'Users',t.headers,[t.headers.map(h=>r[h]??'')]);usersCache=null;return reply({ok:true},201);
  }
  return reply({error:'Маршрут не знайдено.'},404);
 }
