@@ -10,8 +10,7 @@
 - API: Google Sheets API напряму з браузера.
 - Немає D1, SQL, service account, client secret, private key, Apps Script.
 
-Робоча книга за замовчуванням:
-`1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc`.
+Робочу книгу користувач вибирає після входу через Google Picker. Її ID зберігається лише в пам’яті вкладки браузера на час поточного сеансу.
 
 ## 1. Google Cloud project
 
@@ -19,11 +18,14 @@
 2. Увімкніть **Google Sheets API**, **Google Drive API** та **Google Picker API**.
 3. Налаштуйте OAuth consent screen (назва застосунку, контакт, тип користувачів/аудиторія).
 4. Створіть credential типу **OAuth Client ID → Web application**.
-5. У Authorized JavaScript origins додайте:
-   - `https://docs.google.com` (потрібно для сторінки Picker у iframe; також додайте цей origin у Website restrictions API key).
+5. У **Authorized JavaScript origins** додайте:
    - `https://infection-control-amr-tockph.burdataras.workers.dev`
    - локальний origin для розробки, наприклад `http://localhost:5173`.
-6. Скопіюйте OAuth Client ID. Client ID є публічним параметром; не створюйте й не використовуйте client secret для цього SPA token flow.
+   Не додавайте шлях, query string або `https://docs.google.com` до OAuth origins.
+6. Для **Google API key** у Website restrictions окремо додайте:
+   - `https://infection-control-amr-tockph.burdataras.workers.dev/*`
+   - `https://docs.google.com/*` (Google Picker відкривається в iframe на цьому домені).
+7. Скопіюйте OAuth Client ID. Client ID є публічним параметром; не створюйте й не використовуйте client secret для цього SPA token flow.
 
 Для організаційного Google Workspace OAuth consent screen може вимагати внутрішній тип аудиторії та адміністративне схвалення.
 
@@ -39,7 +41,7 @@
 
 Це GitHub Actions repository variables, не secrets. Workflow передає їх у Vite як `VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_API_KEY` і `VITE_GOOGLE_APP_ID`.
 
-ID робочої книги зафіксований у workflow і в `.env.example`. Для локальної розробки створіть `.env.local` на основі `.env.example`.
+Для локальної розробки створіть `.env.local` на основі `.env.example`. У production вибір книги виконується через Google Picker; ID книги не потрібно додавати до GitHub Variables.
 
 ## 3. Права на Google-книгу
 
