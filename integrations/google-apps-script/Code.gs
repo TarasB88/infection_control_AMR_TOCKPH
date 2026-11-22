@@ -96,6 +96,21 @@ function doPost(e) {
       });
     }
 
+    if (action === 'getFacilities') {
+      const merged = getMergedFacilityRecords_();
+      return output_({
+        ok: true,
+        records: merged.records,
+        summary: {
+          sourceRegistryRows: merged.sourceA.rowCount,
+          sourceMonitoringRows: merged.sourceB.rowCount,
+          duplicateRegistryIds: merged.duplicateRegistryIds.length,
+          duplicateMonitoringRows: merged.duplicateMonitoringIds,
+          incompleteRows: merged.incompleteRows
+        }
+      });
+    }
+
     if (action === 'previewFacilitiesSync') {
       return output_(previewFacilitiesSync_(ss, false));
     }
@@ -294,6 +309,25 @@ function mergeUniqueFacilityText_(left, right, field) {
     });
   });
   return values.join('; ');
+}
+
+function getMergedFacilityRecords_() {
+  const merged = getMergedFacilityRecords_();
+  const sourceA = merged.sourceA;
+  const sourceB = merged.sourceB;
+  const duplicateRegistryIds = merged.duplicateRegistryIds;
+  const duplicateMonitoringIds = merged.duplicateMonitoringIds;
+  const records = merged.records;
+  const incompleteRows = merged.incompleteRows;
+
+  return {
+    sourceA: sourceA,
+    sourceB: sourceB,
+    records: records,
+    incompleteRows: incompleteRows,
+    duplicateRegistryIds: duplicateRegistryIds,
+    duplicateMonitoringIds: duplicateMonitoringIds
+  };
 }
 
 function previewFacilitiesSync_(targetBook, commit) {
