@@ -87,6 +87,183 @@ const callGoogleSheetsBridge = async (
   return result;
 };
 
+
+
+// Public, read-only Google Sheets CSV sources for the organizational facility directory.
+const FACILITY_CSV_SOURCES = [
+  { key: 'registry', spreadsheetId: '10Tsfk408PbyzHmPoJdZ1QVtzfULed3yxkpGAFK_M6ew', gid: '0' },
+  { key: 'monitoring', spreadsheetId: '12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ', gid: '933221082' },
+] as const;
+
+const FACILITY_FIELD_ALIASES: Record<string, string[]> = {
+  edrpou: ['єдрпоу', 'кодєдрпоу', 'єдрпоукод', 'єдрпоузоз', 'кодзаєдрпоу', 'кодзгідноєдрпоу', 'кодєдрпоузакладу', 'кодзакладу', 'кодзакладуєдрпоу', 'edrpou', 'hospitalid', 'facilitycode', 'externalcode'],
+  name: ['назва', 'назвазоз', 'назвазакладу', 'повнаназва', 'повнаназвазакладу', 'найменування', 'найменуваннязакладу', 'закладохорониздоровя', 'hospitalname', 'facilityname'],
+  director: ['керівник', 'пібкерівника', 'директор', 'керівникзакладу', 'director', 'manager'],
+  email: ['email', 'електроннапошта', 'електроннаадреса', 'поштоваадреса', 'emailзакладу'],
+  phone: ['телефон', 'контактнийтелефон', 'телефонзакладу', 'phone', 'contactphone'],
+  address: ['адреса', 'юридичнаадреса', 'фактичнаадреса', 'місцезнаходження', 'address'],
+  oblast: ['область', 'regionoblast', 'oblast', 'областьрозташування'],
+  district: ['район', 'адміністративнийрайон', 'районрозташування', 'district'],
+  hromada: ['територіальнагромада', 'громада', 'територіальнагромадазоз', 'hromada', 'territorialhromada'],
+  settlement: ['населенийпункт', 'місто', 'село', 'селище', 'settlement', 'locality'],
+  ownership: ['формавласності', 'ownership', 'propertyform'],
+  care_level: ['рівеньнаданнядопомоги', 'рівеньнаданнямедичноїдопомоги', 'рівеньмедичноїдопомоги', 'рівеньзакладу', 'carelevel', 'levelofcare'],
+  network_status: ['статусуспроможніймережі', 'включеннядоспоможноїмережі', 'включеннядоспроможноїмережі', 'спроможнамережа', 'статусмережі', 'networkstatus'],
+  monitoring_years: ['рокимоніторингу', 'рікмоніторингу', 'рокипроведеннямоніторингу', 'monitoringyears', 'monitoringyear'],
+};
+
+const parseCsvRows = (input: string): string[][] => {
+  const source = input.replace(/^\\uFEFF/, '');
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '"' && quoted && source[i + 1] === '"') {
+      cell += '"';
+      i += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === ',' && !quoted) {
+      row.push(cell);
+      cell = '';
+    } else if ((char === '\\n' || char === '\\r') && !quoted) {
+      if (char === '\\r' && source[i + 1] === '\\n') i += 1;
+      row.push(cell);
+      if (row.some(value => value.trim() !== '')) rows.push(row);
+      row = [];
+      cell = '';
+    } else {
+      cell += char;
+    }
+  }
+  row.push(cell);
+  if (row.some(value => value.trim() !== '')) rows.push(row);
+  return rows;
+};
+
+const normalizeFacilityHeader = (value: unknown): string =>
+  String(value ?? '').toLocaleLowerCase('uk-UA')
+    .replace(/[’'"]/g, '')
+    .replace(/[^0-9a-zа-яіїєґ]/gi, '');
+
+const facilityFieldForHeader = (header: string): string => {
+  const normalized = normalizeFacilityHeader(header);
+  for (const [field, aliases] of Object.entries(FACILITY_FIELD_ALIASES)) {
+    if (aliases.some(alias => {
+      const candidate = normalizeFacilityHeader(alias);
+      return candidate === normalized ||
+        (candidate.length >= 4 && (normalized.startsWith(candidate) || normalized.endsWith(candidate)));
+    })) return field;
+  }
+  return '';
+};
+
+const normalizeEdrpou = (value: unknown): string => {
+  const digits = String(value ?? '').replace(/[^0-9]/g, '');
+  return digits.length >= 8 && digits.length <= 10 ? digits : '';
+};
+
+const readPublicFacilityCsv = async (source: typeof FACILITY_CSV_SOURCES[number]) => {
+  const url = 'https://docs.google.com/spreadsheets/d/' + source.spreadsheetId + '/export?format=csv&gid=' + source.gid;
+  const response = await fetch(url, {
+    headers: { accept: 'text/csv,text/plain;q=0.9,*/*;q=0.1' },
+    redirect: 'follow',
+  });
+  if (!response.ok) throw new Error('facility_csv_' + source.key + '_http_' + response.status);
+  const csv = await response.text();
+  if (!csv || /^\\s*</.test(csv)) throw new Error('facility_csv_' + source.key + '_not_public');
+  const matrix = parseCsvRows(csv);
+  if (matrix.length < 2) throw new Error('facility_csv_' + source.key + '_empty');
+  const headers = matrix[0].map(value => value.trim());
+  if (headers.some(header => !header)) throw new Error('facility_csv_' + source.key + '_blank_header');
+  const normalizedHeaders = headers.map(normalizeFacilityHeader);
+  if (new Set(normalizedHeaders).size !== normalizedHeaders.length) throw new Error('facility_csv_' + source.key + '_duplicate_header');
+  const indexes: Record<string, number> = {};
+  headers.forEach((header, index) => {
+    const field = facilityFieldForHeader(header);
+    if (field && indexes[field] === undefined) indexes[field] = index;
+  });
+  if (indexes.edrpou === undefined) throw new Error('facility_csv_' + source.key + '_edrpou_missing');
+  const dataRows = matrix.slice(1).filter(values => values.some(value => value.trim() !== ''));
+  if (dataRows.length > 5000) throw new Error('facility_csv_' + source.key + '_row_limit');
+  const records: Record<string, string>[] = [];
+  let invalidRows = 0;
+  for (const values of dataRows) {
+    const edrpou = normalizeEdrpou(values[indexes.edrpou]);
+    if (!edrpou) { invalidRows += 1; continue; }
+    const record: Record<string, string> = { edrpou };
+    for (const [field, index] of Object.entries(indexes)) record[field] = String(values[index] ?? '').trim();
+    records.push(record);
+  }
+  return { key: source.key, rowCount: dataRows.length, invalidRows, headers, records };
+};
+
+const mergeFacilityText = (left: string, right: string, field: string): string => {
+  const values: string[] = [];
+  [left, right].forEach(value => {
+    String(value || '').split(field === 'monitoring_years' ? /[,;\\n/]+/ : /\\s*;\\s*/)
+      .forEach(part => {
+        const cleaned = part.trim();
+        if (cleaned && !values.includes(cleaned)) values.push(cleaned);
+      });
+  });
+  return values.join('; ');
+};
+
+const getPublicFacilityRecords = async () => {
+  const [registry, monitoring] = await Promise.all(FACILITY_CSV_SOURCES.map(readPublicFacilityCsv));
+  const registryCounts = new Map<string, number>();
+  registry.records.forEach(record => registryCounts.set(record.edrpou, (registryCounts.get(record.edrpou) ?? 0) + 1));
+  const duplicateRegistryIds = new Set([...registryCounts].filter(([, count]) => count > 1).map(([id]) => id));
+  const registryById = new Map<string, Record<string, string>>();
+  registry.records.forEach(record => {
+    if (!duplicateRegistryIds.has(record.edrpou)) registryById.set(record.edrpou, record);
+  });
+  const monitoringById = new Map<string, Record<string, string>>();
+  let duplicateMonitoringRows = 0;
+  monitoring.records.forEach(record => {
+    const current = monitoringById.get(record.edrpou);
+    if (!current) {
+      monitoringById.set(record.edrpou, { ...record });
+      return;
+    }
+    duplicateMonitoringRows += 1;
+    Object.entries(record).forEach(([field, value]) => {
+      if (field !== 'edrpou') current[field] = mergeFacilityText(current[field] ?? '', value, field);
+    });
+  });
+  const ids = new Set([...registryById.keys(), ...monitoringById.keys()]);
+  const records: Record<string, string>[] = [];
+  let incompleteRows = 0;
+  ids.forEach(edrpou => {
+    const primary = registryById.get(edrpou) ?? {};
+    const secondary = monitoringById.get(edrpou) ?? {};
+    const record: Record<string, string> = { edrpou };
+    Object.keys(FACILITY_FIELD_ALIASES).forEach(field => {
+      if (field === 'edrpou') return;
+      const secondaryFirst = ['care_level', 'network_status', 'monitoring_years'].includes(field);
+      record[field] = secondaryFirst ? (secondary[field] || primary[field] || '') : (primary[field] || secondary[field] || '');
+    });
+    if (!record.name) { incompleteRows += 1; return; }
+    records.push(record);
+  });
+  records.sort((a, b) => a.name.localeCompare(b.name, 'uk'));
+  return {
+    records,
+    summary: {
+      sourceRegistryRows: registry.rowCount,
+      sourceMonitoringRows: monitoring.rowCount,
+      invalidRegistryRows: registry.invalidRows,
+      invalidMonitoringRows: monitoring.invalidRows,
+      duplicateRegistryIds: duplicateRegistryIds.size,
+      duplicateMonitoringRows,
+      incompleteRows,
+    },
+  };
+};
+
 const constantTimeEqual = (left: string, right: string): boolean => {
   const a = new TextEncoder().encode(left);
   const b = new TextEncoder().encode(right);
@@ -588,13 +765,12 @@ export default {
       }
     }
 
-    // Public, read-only directory data for the temporary test dashboard.
-    // Only organizational attributes are returned; personal contact fields are omitted.
+    // Public, read-only organizational directory fetched as CSV, like the influenza dashboard.
+    // Personal contact fields and the Users worksheet are never returned by this endpoint.
     if (url.pathname === '/api/facilities' && request.method === 'GET') {
       try {
-        const result = await callGoogleSheetsBridge(env, { action: 'getFacilities' });
-        const sourceRecords = Array.isArray(result.records) ? result.records as Array<Record<string, unknown>> : [];
-        const records = sourceRecords.map(record => ({
+        const result = await getPublicFacilityRecords();
+        const records = result.records.map(record => ({
           edrpou: text(record.edrpou),
           name: text(record.name),
           oblast: text(record.oblast),
@@ -605,18 +781,25 @@ export default {
           ownership: text(record.ownership),
           care_level: text(record.care_level),
           network_status: text(record.network_status),
-          monitoring_years: text(record.monitoring_years)
+          monitoring_years: text(record.monitoring_years),
         }));
         return json({
           records,
           count: records.length,
-          summary: result.summary ?? null,
-          source: 'google_sheets_live'
+          summary: result.summary,
+          source: 'google_sheets_csv',
+          fetchedAt: new Date().toISOString(),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'facilities_source_unavailable';
-        const status = message === 'google_sheets_not_configured' ? 503 : 502;
-        return json({ error: 'facilities_unavailable', message }, status);
+        const status = message.includes('_not_public') || message.includes('_http_401') || message.includes('_http_403') ? 503 : 502;
+        return json({
+          error: 'facilities_unavailable',
+          message,
+          hint: status === 503
+            ? 'Надайте доступ для читання без входу Google лише двом аркушам-джерелам реєстру та моніторингу.'
+            : 'Перевірте заголовки та структуру CSV-аркушів джерел.',
+        }, status);
       }
     }
 
