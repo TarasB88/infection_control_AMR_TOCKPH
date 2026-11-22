@@ -53,7 +53,13 @@ async function passwordHash(p:string){
 }
 async function passwordOK(p:string,stored:string){
  try{
-  const [scheme,it,salt,hash]=stored.split('
+  const [scheme,it,salt,hash]=stored.split(String.fromCharCode(36)),n=Number(it);
+  if(scheme!=='pbkdf2-sha256'||!Number.isInteger(n)||n<100000||n>600000||!salt||!hash)return false;
+  const saltBytes=unb64(salt),want=unb64(hash);if(saltBytes.length!==16||want.length!==32)return false;
+  const material=await crypto.subtle.importKey('raw',te.encode(p),'PBKDF2',false,['deriveBits']),got=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:saltBytes,iterations:n},material,256));
+  let diff=0;for(let i=0;i<got.length;i++)diff|=got[i]^want[i];return diff===0;
+ }catch{return false;}
+}
 async function makeSession(u:User,e:Env){
  const body=b64(te.encode(JSON.stringify({u,exp:Date.now()+8*60*60*1000}))),key=await crypto.subtle.importKey('raw',te.encode(e.SESSION_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']),sig=await crypto.subtle.sign('HMAC',key,te.encode(body));
  return body+'.'+b64(new Uint8Array(sig));
@@ -170,125 +176,5 @@ export default {async fetch(req:Request,e:Env){
   if(req.method!=='GET'&&req.headers.get('Origin')!==url.origin)return reply({error:'Недійсне джерело запиту.'},403);
   if(!e.SESSION_SECRET||te.encode(e.SESSION_SECRET).length<32)return reply({error:'Серверна авторизація не налаштована належним чином.'},503);
   try{return await handle(req,e);}catch(err){console.error('IPC API request failed',err instanceof Error?err.message:'unknown error');return reply({error:'Внутрішня помилка сервера.'},500);}
- }return e.ASSETS.fetch(req);
-}};
-),n=Number(it);
-  if(scheme!=='pbkdf2-sha256'||!Number.isInteger(n)||n<100000||n>600000||!salt||!hash)return false;
-  const saltBytes=unb64(salt),want=unb64(hash);if(saltBytes.length!==16||want.length!==32)return false;
-  const material=await crypto.subtle.importKey('raw',te.encode(p),'PBKDF2',false,['deriveBits']),got=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:saltBytes,iterations:n},material,256));
-  let diff=0;for(let i=0;i<got.length;i++)diff|=got[i]^want[i];return diff===0;
- }catch{return false;}
-}
-async function makeSession(u:User,e:Env){
- const body=b64(te.encode(JSON.stringify({u,exp:Date.now()+8*60*60*1000}))),key=await crypto.subtle.importKey('raw',te.encode(e.SESSION_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']),sig=await crypto.subtle.sign('HMAC',key,te.encode(body));
- return body+'.'+b64(new Uint8Array(sig));
-}
-async function session(req:Request,e:Env):Promise<User|null>{
- const raw=(req.headers.get('Cookie')||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('ipc_session='))?.slice(12);if(!raw)return null;
- const [body,sig]=raw.split('.');if(!body||!sig)return null;
- const key=await crypto.subtle.importKey('raw',te.encode(e.SESSION_SECRET),{name:'HMAC',hash:'SHA-256'},false,['verify']);
- if(!await crypto.subtle.verify('HMAC',key,unb64(sig),te.encode(body)))return null;
- try{const d=JSON.parse(td.decode(unb64(body)));return d.exp>Date.now()?d.u as User:null;}catch{return null;}
-}
-async function liveSession(req:Request,e:Env):Promise<User|null>{
- const signed=await session(req,e);if(!signed)return null;
- const t=await readTable(e,'Users'),row=t.rows.find(r=>String(r.Username||'').toLowerCase()===signed.username.toLowerCase());
- return row&&yes(row.Is_Active)?toUser(row):null;
-}
-const cookie=(v:string,age=28800)=>'ipc_session='+v+'; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age='+age;
-const inScope=(u:User,c:string)=>u.allFacilities||u.facilityCodes.includes(c);
-function scoped(s:Sheet,rows:Record<string,string>[],u:User){
- if(u.role==='admin'||u.allFacilities||['Legal_Acts','Dictionaries','Training_Events'].includes(s))return rows;
- const fields=s==='Facilities'?['EDRPOU']:s==='AST_Data'||s==='WGS_Staging'?['Hospital_ID']:['Facility_ID','EDRPOU','Hospital_ID'];
- return rows.filter(r=>{const c=fields.map(k=>r[k]).find(Boolean)||'';return !!c&&inScope(u,c);});
-}
-const OPERATOR_WRITE_SHEETS:ReadonlySet<Sheet>=new Set(['Facility_IPC_Profile','IPC_Visits','IPC_Assessments','Recommendations','Training_Facility_Stats','AST_Data','WGS_Staging']);
-function mayWrite(u:User,s:Sheet){if(u.role==='admin')return s!=='Users';return u.role==='operator'&&OPERATOR_WRITE_SHEETS.has(s);}
-
-async function handle(req:Request,e:Env):Promise<Response>{
- const url=new URL(req.url),p=url.pathname;
- if(p==='/api/health'&&req.method==='GET')return reply({ok:true,storage:'google-sheets'});
- if(p==='/api/auth/login'&&req.method==='POST'){
-  const b=await req.json() as {username?:string;password?:string},name=String(b.username||'').trim().toLowerCase(),pass=String(b.password||'');
-  if(!name||!pass||pass.length>256)return reply({error:'Введіть логін і пароль.'},400);
-  const table=await readTable(e,'Users');
-  if(!table.rows.length&&e.BOOTSTRAP_ADMIN_USERNAME&&e.BOOTSTRAP_ADMIN_PASSWORD_HASH){
-   if(!table.headers.length)throw Error('Спочатку додайте рядок заголовків до аркуша Users.');
-   const now=new Date().toISOString(),r:Record<string,string>={User_ID:crypto.randomUUID(),Username:e.BOOTSTRAP_ADMIN_USERNAME,Email:'',Display_Name:e.BOOTSTRAP_ADMIN_DISPLAY_NAME||'Адміністратор',Password_Hash:e.BOOTSTRAP_ADMIN_PASSWORD_HASH,Role:'admin',All_Facilities:'TRUE',Facility_Codes:'',Is_Active:'TRUE',Must_Change_Password:'TRUE',Created_At:now,Updated_At:now,Last_Login_At:''};
-   await append(e,'Users',table.headers,[table.headers.map(h=>r[h]||'')]);table.rows.push(r);
-  }
-  const r=table.rows.find(x=>String(x.Username||'').trim().toLowerCase()===name);
-  if(!r||!yes(r.Is_Active)||!await passwordOK(pass,r.Password_Hash||''))return reply({error:'Неправильний логін або пароль, або обліковий запис неактивний.'},401);
-  const idx=Number(r.__rowNumber)||table.rows.indexOf(r)+2;r.Last_Login_At=new Date().toISOString();await update(e,'Users',idx,table.headers,table.headers.map(h=>r[h]??''));
-  const u=toUser(r);return reply({user:u},200,{'Set-Cookie':cookie(await makeSession(u,e))});
- }
- if(p==='/api/auth/logout'&&req.method==='POST')return reply({ok:true},200,{'Set-Cookie':cookie('',0)});
- if(p==='/api/auth/me'&&req.method==='GET'){const u=await liveSession(req,e);return u?reply({user:u}):reply({user:null},401);}
- const u=await liveSession(req,e);if(!u)return reply({error:'Потрібно увійти в систему або обліковий запис деактивовано.'},401);
- if(u.mustChangePassword&&p!=='/api/auth/change-password')return reply({error:'Перед продовженням роботи змініть початковий пароль.'},403);
- if(p==='/api/auth/change-password'&&req.method==='POST'){
-  const b=await req.json() as {currentPassword?:string;newPassword?:string},current=String(b.currentPassword||''),next=String(b.newPassword||'');
-  if(next.length<12||next.length>128)return reply({error:'Новий пароль має містити від 12 до 128 символів.'},400);
-  const t=await readTable(e,'Users'),r=t.rows.find(x=>String(x.Username||'').toLowerCase()===u.username.toLowerCase());
-  if(!r||!await passwordOK(current,r.Password_Hash||''))return reply({error:'Поточний пароль неправильний.'},401);
-  r.Password_Hash=await passwordHash(next);r.Must_Change_Password='FALSE';r.Updated_At=new Date().toISOString();
-  await update(e,'Users',Number(r.__rowNumber)||t.rows.indexOf(r)+2,t.headers,t.headers.map(h=>r[h]??''));
-  const updated={...u,mustChangePassword:false};return reply({user:updated},200,{'Set-Cookie':cookie(await makeSession(updated,e))});
- }
-
- const m=p.match(/^\/api\/sheets\/([A-Za-z_]+)$/);
- if(m){
-  const s=m[1] as Sheet;if(!SHEETS.includes(s))return reply({error:'Невідомий аркуш.'},404);
-  if(s==='Users'&&u.role!=='admin')return reply({error:'Недостатньо прав.'},403);
-  if(req.method==='GET'){
-   const t=await readTable(e,s),headers=t.headers.filter(h=>h!=='Password_Hash'&&h!=='Password'),rows=s==='Users'?t.rows.map(r=>{const x={...r};delete x.Password_Hash;delete x.Password;delete x.__rowNumber;return x;}):scoped(s,t.rows,u).map(r=>{const x={...r};delete x.__rowNumber;return x;});
-   return reply({headers,rows});
-  }
-  if(req.method==='POST'){
-   if(s==='Users')return reply({error:'Користувачів можна змінювати лише через адміністративний API.'},403);
-   if(!mayWrite(u,s))return reply({error:'Недостатньо прав для запису до цього аркуша.'},403);
-   const b=await req.json() as {headers?:string[];rows?:unknown[][]};
-   if(!Array.isArray(b.headers)||!Array.isArray(b.rows)||b.headers.length===0)return reply({error:'Некоректний формат запису.'},400);
-   if(b.headers.some(h=>typeof h!=='string'||!h.trim())||new Set(b.headers.map(h=>h.toLowerCase())).size!==b.headers.length)return reply({error:'Заголовки колонок некоректні.'},400);
-   if(b.headers.includes('Password')||b.headers.includes('Password_Hash'))return reply({error:'Пароль можна змінювати лише через адміністративний API.'},400);
-   if(b.rows.length>1000||b.rows.some(row=>!Array.isArray(row)||row.length!==b.headers!.length))return reply({error:'Кількість значень у рядках не відповідає схемі аркуша.'},400);
-   const existing=await readTable(e,s);
-   let headers=existing.headers;
-   if(!headers.length){
-    if(u.role!=='admin'||b.rows.length!==1||b.rows[0].some((value,index)=>String(value??'')!==b.headers![index]))return reply({error:'Порожній аркуш може ініціалізувати лише адміністратор рядком заголовків.'},403);
-    headers=b.headers;
-   }else if(b.headers.length!==headers.length||b.headers.some((header,index)=>header!==headers[index])){
-    return reply({error:'Схема колонок не збігається із заголовками аркуша. Оновіть дані й повторіть спробу.'},400);
-   }
-   if(u.role!=='admin'){
-    const scopeColumn=s==='AST_Data'||s==='WGS_Staging'?'Hospital_ID':'Facility_ID';
-    const scopeIndex=headers.indexOf(scopeColumn);
-    if(scopeIndex<0)return reply({error:'Для цього аркуша не налаштовано поле контролю доступу до закладу.'},403);
-    for(const row of b.rows){
-     if(!inScope(u,String(row[scopeIndex]??'').trim()))return reply({error:'Запис поза межами дозволених закладів.'},403);
-    }
-   }
-   await append(e,s,headers,b.rows);return reply({ok:true});
-  }
- }
- if(p==='/api/admin/users'&&req.method==='POST'){
-  if(u.role!=='admin')return reply({error:'Лише адміністратор може створювати користувачів.'},403);
-  const b=await req.json() as {username?:string;password?:string;email?:string;displayName?:string;role?:Role;allFacilities?:boolean;facilityCodes?:string[];isActive?:boolean};
-  const username=String(b.username||'').trim().toLowerCase(),pass=String(b.password||'');
-  if(!/^[a-z0-9._-]{3,40}$/.test(username))return reply({error:'Логін має містити 3–40 символів латиниці, цифр, крапки, дефіса або підкреслення.'},400);
-  if(pass.length<12||pass.length>128)return reply({error:'Початковий пароль має містити від 12 до 128 символів.'},400);
-  if(!['admin','operator','analyst'].includes(String(b.role)))return reply({error:'Невідома роль.'},400);
-  const t=await readTable(e,'Users');if(!t.headers.length)return reply({error:'У Users відсутній рядок заголовків.'},400);
-  if(t.rows.some(r=>String(r.Username||'').toLowerCase()===username))return reply({error:'Такий логін уже існує.'},409);
-  const now=new Date().toISOString(),r:Record<string,string>={User_ID:crypto.randomUUID(),Username:username,Email:String(b.email||''),Display_Name:String(b.displayName||username),Password_Hash:await passwordHash(pass),Role:String(b.role),All_Facilities:b.allFacilities?'TRUE':'FALSE',Facility_Codes:(b.facilityCodes||[]).join(';'),Is_Active:b.isActive===false?'FALSE':'TRUE',Must_Change_Password:'TRUE',Created_At:now,Updated_At:now,Last_Login_At:'',Notes:''};
-  await append(e,'Users',t.headers,[t.headers.map(h=>r[h]??'')]);return reply({ok:true},201);
- }
- return reply({error:'Маршрут не знайдено.'},404);
-}
-export default {async fetch(req:Request,e:Env){
- const url=new URL(req.url);if(url.pathname.startsWith('/api/')){
-  if(req.method!=='GET'&&req.headers.get('Origin')!==url.origin)return reply({error:'Недійсне джерело запиту.'},403);
-  if(!e.SESSION_SECRET)return reply({error:'Не налаштовано SESSION_SECRET у Cloudflare Worker.'},503);
-  try{return await handle(req,e);}catch(err){return reply({error:err instanceof Error?err.message:'Внутрішня помилка сервера.'},500);}
  }return e.ASSETS.fetch(req);
 }};
