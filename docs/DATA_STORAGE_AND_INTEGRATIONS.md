@@ -1,54 +1,48 @@
-# Data storage and integration architecture
+# Архітектура зберігання даних IPC & AMR
 
-## Current implementation
+## Єдине джерело даних
 
-- **Cloudflare Workers:** serves the application and authenticated API.
-- **Cloudflare D1:** operational source of truth, configured through `wrangler.jsonc`.
-- **AST persistence:** manual entry and Excel import use the same Worker/D1 validation and persistence path.
-- **Authentication:** D1-backed user profiles, PBKDF2 password hashes, opaque server-side sessions and secure HttpOnly cookies.
-- **Authorization:** roles `admin`, `operator` and `analyst`; facility-scoped access is enforced by the Worker.
-- **Audit:** import batches and actor-attributed audit events are stored in D1.
+Робочі дані зберігаються в одній приватній книзі Google Sheets. Cloudflare Workers використовується лише для роздавання статичних файлів застосунку. Cloudflare D1 повністю вилучено з конфігурації, коду та процесу розгортання.
 
-The current authentication and persisted AST workflow are implemented. The IPC visit/assessment, WGS and legal-act modules still require their own persisted forms, endpoints and role-aware permissions before operational use.
+Браузер здійснює OAuth-вхід користувача через Google Identity Services і напряму читає/записує Google Sheets API. У коді немає Google service account, client secret, private key, Apps Script або серверного токена Google.
 
-## Data flow for AST
+## Аркуші головної книги
 
-1. An operator submits an Excel workbook or enters AST results manually.
-2. The Worker validates the expected fields and row-level values.
-3. Patient identifiers are pseudonymized server-side using the configured HMAC secret.
-4. Facility, isolate, AST-result and import-batch records are written to D1.
-5. The Worker records the import outcome and audit event.
-6. Authorized users read AST records through the authenticated API.
+- `Facilities` — реєстр закладів.
+- `Facility_IPC_Profile` — організаційний IPC-профіль закладу.
+- `IPC_Visits` — моніторингові візити.
+- `IPC_Assessments` — результати оцінювання критеріїв IPC.
+- `Recommendations` — коригувальні заходи та рекомендації.
+- `Training_Events` — навчальні заходи.
+- `Training_Facility_Stats` — розподіл охоплення навчання за закладами.
+- `AST_Data` — результати фенотипового AMR/AST.
+- `WGS_Staging` — результати геномного нагляду.
+- `Legal_Acts` — нормативно-правові акти.
+- `Dictionaries` — довідники та контрольовані значення.
+- `Users` — Google-акаунти, ролі й призначені коди закладів.
 
-One row represents one antimicrobial susceptibility result for one isolate against one antimicrobial agent. Preserve MIC operator, MIC value, zone diameter, S/I/R category and interpretation-standard version as separate fields.
+Якщо аркуш відсутній, клієнт створює його через Sheets API та записує початковий рядок заголовків. Якщо аркуш уже має заголовки, вони не перезаписуються.
 
-Do not calculate resistance percentages until the denominator, deduplication rule, organism/antimicrobial pairing and reporting period have been approved.
+## Вхід і користувачі
 
-## Future integrations
+Кожен працівник входить власним Google-акаунтом. Під час першого входу на порожній аркуш `Users` записується перший адміністратор. Надалі адміністратор додає email, ПІБ, роль і коди закладів у `Users`. Паролі застосунок не створює й не зберігає.
 
-### Cloudflare R2
+Google OAuth Client ID, обмежений Google Picker API key та числовий App ID — публічні параметри вебзастосунку, а не секрети. OAuth використовує scope `drive.file` і Picker вибирає конкретну книгу; для збірки потрібно задати GitHub Actions variables `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_API_KEY` і `GOOGLE_CLOUD_PROJECT_NUMBER`. Google Cloud project має мати ввімкнений Google Sheets API, налаштований OAuth consent screen і web OAuth client із дозволеним production origin.
 
-R2 is not currently connected. It may later store source workbooks, generated exports and large sequencing files. Buckets must remain private; use authenticated access or short-lived signed URLs.
+## Критичне обмеження доступу
 
-### Google Sheets
+Google Sheets надає дозволи на рівні всієї книги. Якщо працівник має доступ до книги і застосунок отримав від нього scope `spreadsheets`, він технічно може читати й змінювати інші аркуші книги поза інтерфейсом. Ролі в `Users` приховують/показують елементи UI, але не є серверним механізмом ізоляції даних.
 
-The Worker reads the two facility-directory sources directly through Google's XLSX export endpoint:
+Тому ця конструкція не забезпечує рядковий або аркушевий контроль доступу. Не надавайте доступ до книги користувачам, яким не можна бачити всі її дані. Не зберігайте прямі ідентифікатори пацієнтів; використовуйте погоджені псевдоніми. Для клінічних даних перед широким впровадженням потрібна окрема оцінка ризику та правомірності доступу.
 
-`Google Sheets export URL → Cloudflare Worker → authenticated facility directory`
+## Налаштування без секретів Google
 
-This is a read-only connection. It does not use the Google Sheets API, OAuth, a service account, API keys, private keys, Apps Script, a Web App, or a bridge token. The Worker parses the selected GIDs, validates source headers, merges facilities by EDRPOU and returns organizational fields only.
+1. Створити Web OAuth Client ID у Google Cloud Console.
+2. Увімкнути Google Sheets API.
+3. Додати production-домен у Authorized JavaScript origins.
+4. У GitHub repository variables додати `GOOGLE_OAUTH_CLIENT_ID` (не в Secrets).
+5. Переконатися, що працівники, які мають користуватися застосунком, мають доступ до книги Google Drive.
+6. У `Users` задати профілі; перший вхід на порожній `Users` створить адміністратора.
+7. Дані всіх модулів мають бути в однойменних аркушах головної книги.
 
-The export endpoint must be able to read each source without an interactive Google login. Google link-view permissions apply to the whole workbook, not just the selected tab. Use dedicated sanitized source workbooks containing only non-sensitive organizational fields; never expose books with patient-level records, personal contacts, credentials or restricted tabs. The Worker does not write back to Google Sheets.
-
-The private IPC/AMR target workbook is not connected to the Worker. AST data enters D1 through authenticated Excel import or manual entry; Patient_ID is HMAC-pseudonymized server-side. The app does not publish or read the private `AST_Data` or `Users` worksheets. WGS, IPC assessments, training and legal-act modules still require their own persisted forms and endpoints before operational use.
-
-The application may still require `INITIAL_ADMIN_SETUP_TOKEN` for first administrator creation and `PATIENT_HMAC_SECRET` for patient-ID pseudonymization. These are application-security settings, not Google credentials.
-
-## Privacy and governance
-
-- Do not store direct patient identifiers in D1.
-- Keep `PATIENT_HMAC_SECRET` stable after imports begin.
-- Restrict facility-level access by role and assigned facility codes.
-- Record import and data-change provenance.
-- Define retention, backup, restore and incident-response procedures.
-- Complete a security and lawful-basis review before operational use with identifiable or patient-linked data.
+Для публікації Cloudflare все ще потрібен окремий Cloudflare API token у GitHub Actions secret `CLOUDFLARE_API_TOKEN`. Це токен розгортання Cloudflare, не Google-доступ. Його не потрібно передавати в чат.
