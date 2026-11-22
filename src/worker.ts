@@ -466,7 +466,18 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
           columns: Number(sheet.columns ?? 0),
           // The Users worksheet is deliberately never exposed through this endpoint.
           headers: Array.isArray(sheet.headers) ? sheet.headers.map(text) : [],
-          // User credentials are never returned; only the column names are exposed to administrators.
+          // Report structural defects without returning any row data.
+          headerIssues: (() => {
+            const headers = Array.isArray(sheet.headers) ? sheet.headers.map(text) : [];
+            const issues: string[] = [];
+            if (!headers.length) issues.push('missing_header_row');
+            if (headers.some(header => !header)) issues.push('blank_header');
+            const normalized = headers.map(header => header.toLocaleLowerCase());
+            if (new Set(normalized).size !== normalized.length) issues.push('duplicate_header');
+            if (Number(sheet.rows ?? 0) > 0 && headers.length === 0) issues.push('rows_without_headers');
+            return issues;
+          })(),
+          // The Users worksheet is intentionally excluded from generic read operations.
           readable: text(sheet.name) !== 'Users',
         })),
       });
