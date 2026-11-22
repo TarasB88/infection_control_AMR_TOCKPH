@@ -486,7 +486,7 @@ function installFacilitiesAutoSync_() {
 }
 
 function removeFacilitiesAutoSync_() {
-  const handlers = ['sourceSpreadsheetEditHandler_', 'scheduledFacilitiesSync_'];
+  const handlers = ['sourceSpreadsheetEditHandler_', 'scheduledFacilitiesSync_', 'debouncedFacilitiesSync_'];
   let deleted = 0;
   ScriptApp.getProjectTriggers().forEach(trigger => {
     if (handlers.indexOf(trigger.getHandlerFunction()) >= 0) {
@@ -521,6 +521,7 @@ function getFacilitiesAutoSyncStatus_() {
     lastSuccessAt: props.getProperty('FACILITIES_AUTO_SYNC_LAST_SUCCESS_AT') || '',
     lastSource: props.getProperty('FACILITIES_AUTO_SYNC_LAST_SOURCE') || '',
     lastError: props.getProperty('FACILITIES_AUTO_SYNC_LAST_ERROR') || '',
+    pending: props.getProperty('FACILITIES_AUTO_SYNC_PENDING') === 'true',
     lastSummary: lastSummary
   };
 }
@@ -557,8 +558,23 @@ function runFacilitiesSync_(source) {
 }
 
 function sourceSpreadsheetEditHandler_(event) {
-  const enabled = PropertiesService.getScriptProperties().getProperty('FACILITIES_AUTO_SYNC_ENABLED') === 'true';
-  if (!enabled) return;
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('FACILITIES_AUTO_SYNC_ENABLED') !== 'true') return;
+  // Debounce rapid consecutive edits so a paste or multi-cell update causes one sync.
+  const hasPending = ScriptApp.getProjectTriggers().some(trigger =>
+    trigger.getHandlerFunction() === 'debouncedFacilitiesSync_' &&
+    trigger.getEventType() === ScriptApp.EventType.CLOCK
+  );
+  props.setProperty('FACILITIES_AUTO_SYNC_PENDING', 'true');
+  if (!hasPending) {
+    ScriptApp.newTrigger('debouncedFacilitiesSync_').timeBased().after(60 * 1000).create();
+  }
+}
+
+function debouncedFacilitiesSync_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('FACILITIES_AUTO_SYNC_ENABLED') !== 'true') return;
+  props.setProperty('FACILITIES_AUTO_SYNC_PENDING', 'false');
   runFacilitiesSync_('source_edit');
 }
 
