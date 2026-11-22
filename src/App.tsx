@@ -7,7 +7,7 @@ import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import {
   appendSheetRows, clearGoogleSession, createMissingSheetTabs, getGoogleProfile, getSpreadsheetTabs,
-  googleClientConfigured, GOOGLE_SHEET_TABS, readSheetTable, signInWithGoogle,
+  googleClientConfigured, GOOGLE_SHEET_TABS, readSheetTable, selectSpreadsheetWithPicker, signInWithGoogle,
   type GoogleProfile, type GoogleSheetTab, type SheetRecord,
 } from './lib/google-sheets';
 
@@ -124,6 +124,7 @@ export default function App(){
     try{
       await signInWithGoogle();
       const profile=await getGoogleProfile();
+      const selectedWorkbook=await selectSpreadsheetWithPicker();
       const existingTabs=await getSpreadsheetTabs();
       if(!existingTabs.includes('Users'))await createMissingSheetTabs(['Users']);
       let users=await readSheetTable('Users');
@@ -143,7 +144,7 @@ export default function App(){
       setGoogleProfile(profile);setUser(appUser);
       await ensureWorkbook();
       setAuthError('');
-      setNotice('Підключено Google Sheets · '+profile.email+'. Усі дані читаються безпосередньо з робочої книги.');
+      setNotice('Підключено Google Sheets · '+selectedWorkbook.name+' · '+profile.email+'. Вибрано саме цю книгу через Google Picker.');
       setTab('overview');
     }catch(error){
       clearGoogleSession();setUser(null);setGoogleProfile(null);
