@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 // Build source: current main revision; keep this marker to verify fresh Cloudflare builds.
 interface LocalD1Result<T = Record<string, unknown>> {
   success: boolean;
@@ -138,10 +139,22 @@ const normalizeCode=(value:unknown)=>{const digits=text(value).replace(/[^0-9]/g
 const mergeFieldText=(a:unknown,b:unknown,field:string)=>{
  const output:string[]=[];[a,b].forEach(v=>String(v||'').split(field==='monitoring_years'?/[,;\n/]+/ : /\s*;\s*/).forEach(x=>{const item=String(x||'').trim();if(item&&!output.includes(item))output.push(item);}));return output.join('; ');
 };
-const readSource=async(env:WorkerEnv,source:{key:string;spreadsheetId:string;sheetId:number})=>{
- const meta=(await sheetMeta(env,source.spreadsheetId)).find(s=>s.properties.sheetId===source.sheetId);
- if(!meta)throw new Error('source_sheet_missing_'+source.key);
- const values=await readValues(env,source.spreadsheetId,quoteTab(meta.properties.title)+'!A:ZZ');
+const fetchPublicSheet=async(source:{key:string;spreadsheetId:string;sheetId:number}):Promise<unknown[][]>=>{
+ const url=new URL('https://docs.google.com/spreadsheets/d/'+encodeURIComponent(source.spreadsheetId)+'/export');
+ url.searchParams.set('format','xlsx');
+ url.searchParams.set('gid',String(source.sheetId));
+ const response=await fetch(url.toString(),{redirect:'follow',headers:{accept:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}});
+ if(!response.ok)throw new Error('source_export_http_'+response.status+'_'+source.key);
+ const buffer=await response.arrayBuffer();
+ if(buffer.byteLength<100||buffer.byteLength>30_000_000)throw new Error('source_export_size_invalid_'+source.key);
+ let workbook:XLSX.WorkBook;
+ try{workbook=XLSX.read(new Uint8Array(buffer),{type:'array'});}catch{throw new Error('source_export_not_xlsx_'+source.key);}
+ const name=workbook.SheetNames[0];
+ if(!name||!workbook.Sheets[name])throw new Error('source_sheet_missing_'+source.key);
+ return XLSX.utils.sheet_to_json(workbook.Sheets[name],{header:1,defval:'',raw:true}) as unknown[][];
+};
+const readSource=async(_env:WorkerEnv,source:{key:string;spreadsheetId:string;sheetId:number})=>{
+ const values=await fetchPublicSheet(source);
  if(!values.length)throw new Error('source_empty_'+source.key);
  const headers=values[0].map(text);if(headers.some(h=>!h))throw new Error('source_blank_header_'+source.key);
  const normalized=headers.map(normalizeHeader);if(new Set(normalized).size!==normalized.length)throw new Error('source_duplicate_header_'+source.key);
@@ -149,7 +162,7 @@ const readSource=async(env:WorkerEnv,source:{key:string;spreadsheetId:string;she
  if(indexes.edrpou==null)throw new Error('source_edrpou_column_missing_'+source.key);
  const records:Array<Record<string,string>>=[];let invalidRows=0;
  values.slice(1).forEach(row=>{if(!row.some(text))return;const edrpou=normalizeCode(row[indexes.edrpou]);if(!edrpou){invalidRows++;return;}const item:Record<string,string>={edrpou};Object.keys(indexes).forEach(f=>item[f]=text(row[indexes[f]]));records.push(item);});
- return{headers,rowCount:values.length-1,records,invalidRows};
+ return{headers,rowCount:values.slice(1).filter(row=>row.some(text)).length,records,invalidRows};
 };
 const mergedFacilities=async(env:WorkerEnv)=>{
  const [a,b]=await Promise.all(GOOGLE_FACILITY_SOURCES.map(s=>readSource(env,s)));
