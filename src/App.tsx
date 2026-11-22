@@ -240,7 +240,7 @@ export default function App(){
     {id:'imports',label:'Імпорт даних',icon:ArrowUpFromLine,group:'ІНСТРУМЕНТИ'},
   ];
   const activeHeaders=activeSheet?sheets[activeSheet]?.headers||[]:[];
-  const canWrite=true;
+  const canWrite=Boolean(googleProfile);
   const addForm=(sheet:GoogleSheetTab)=>{setDraft(Object.fromEntries((sheets[sheet]?.headers||[]).map(h=>[h,''])));setShowForm(true);};
   const activeRecords=activeSheet?sheets[activeSheet]?.rows||[]:[];
   const selectedFacilities=activeSheet==='Facilities'?visibleFacilities:[];
