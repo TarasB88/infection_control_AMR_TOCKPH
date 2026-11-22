@@ -41,7 +41,7 @@ const TAB_LABELS:Record<Tab,string> = {
   training:'Навчальні заходи',amr:'Моніторинг AST',wgs:'Геномний нагляд WGS',recommendations:'Рекомендації',
   imports:'Імпорт даних',legal:'Моніторинг НПА',users:'Користувачі та доступ',
 };
-const REQUIRED_AST = AST_HEADERS.filter(field => !['Patient_ID','MIC_Operator','MIC_Value','Zone_Diameter'].includes(field));
+const REQUIRED_AST:(keyof AstRow)[] = AST_HEADERS.filter(field => !['Patient_ID','MIC_Operator','MIC_Value','Zone_Diameter'].includes(field)) as (keyof AstRow)[];
 const norm=(value:string)=>value.toLocaleLowerCase('uk').replace(/[’'"_\s-]/g,'').replace(/[^a-zа-яіїєґ0-9]/gi,'');
 const getCell=(record:SheetRecord,names:string[],fallback='')=>{
   for(const name of names){
