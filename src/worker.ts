@@ -765,12 +765,15 @@ export default {
       }
     }
 
-    // Public, read-only organizational directory fetched as CSV, like the influenza dashboard.
-    // Personal contact fields and the Users worksheet are never returned by this endpoint.
+    // Facility source sheets are read through the private Apps Script bridge.
+    // Never publish source CSVs: they may contain director or other contact details.
     if (url.pathname === '/api/facilities' && request.method === 'GET') {
+      const authenticated = await getAuthenticatedUser(request, env);
+      if (authenticated.error) return authenticated.error;
       try {
-        const result = await getPublicFacilityRecords();
-        const records = result.records.map(record => ({
+        const result = await callGoogleSheetsBridge(env, { action: 'getFacilities' });
+        if (!Array.isArray(result.records)) return json({ error: 'invalid_bridge_response' }, 502);
+        const records = (result.records as Array<Record<string, unknown>>).map(record => ({
           edrpou: text(record.edrpou),
           name: text(record.name),
           oblast: text(record.oblast),
@@ -786,19 +789,19 @@ export default {
         return json({
           records,
           count: records.length,
-          summary: result.summary,
-          source: 'google_sheets_csv',
+          summary: result.summary ?? null,
+          source: 'private_google_sheets_bridge',
           fetchedAt: new Date().toISOString(),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'facilities_source_unavailable';
-        const status = message.includes('_not_public') || message.includes('_http_401') || message.includes('_http_403') ? 503 : 502;
+        const status = message === 'google_sheets_not_configured' ? 503 : 502;
         return json({
           error: 'facilities_unavailable',
           message,
           hint: status === 503
-            ? 'Опублікуйте лише потрібні аркуші-джерела як CSV і додайте їхні посилання в конфігурацію Worker.'
-            : 'Перевірте заголовки та структуру CSV-аркушів джерел.',
+            ? 'Приватний зв’язок із Google Sheets не налаштований у Worker.'
+            : 'Перевірте доступність приватного Apps Script bridge та джерел реєстру.',
         }, status);
       }
     }
