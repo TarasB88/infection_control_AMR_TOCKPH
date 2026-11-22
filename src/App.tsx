@@ -198,6 +198,28 @@ export default function App(){
       const workbook=XLSX.read(await file.arrayBuffer(),{type:'array'});
       const worksheet=workbook.Sheets[workbook.SheetNames[0]];
       const raw=XLSX.utils.sheet_to_json<SheetRecord>(worksheet,{defval:''});
+      if(!raw.length)throw new Error('У файлі немає рядків даних.');
+      if(tab==='wgs'){
+        const table=sheets.WGS_Staging;
+        if(!table?.headers.length)throw new Error('Аркуш WGS_Staging не має заголовків.');
+        const sourceHeaders=Object.keys(raw[0]||{});
+        const requiredWgs=['Sample_ID','Isolate_ID','Sequencing_Date','Sequencing_Platform'];
+        const missing=requiredWgs.filter(header=>!sourceHeaders.some(key=>norm(key)===norm(header)));
+        if(missing.length)throw new Error('У WGS Excel відсутні обов’язкові колонки: '+missing.join(', '));
+        const rows=raw.map((record,index)=>{
+          const normalized=Object.fromEntries(Object.entries(record).map(([key,value])=>[norm(key),String(value??'')]));
+          if(!normalized.sampleid||!normalized.isolateid||!normalized.sequencingdate||!normalized.sequencingplatform){
+            throw new Error('Рядок '+(index+2)+': Sample_ID, Isolate_ID, Sequencing_Date та Sequencing_Platform обов’язкові.');
+          }
+          return table.headers.map(header=>normalized[norm(header)]??'');
+        });
+        await appendSheetRows('WGS_Staging',table.headers,rows);
+        const updated=await readSheetTable('WGS_Staging');
+        setSheets(previous=>({...previous,WGS_Staging:updated}));
+        setNotice('Імпортовано '+rows.length+' результатів WGS безпосередньо до Google Sheets.');
+        setTab('wgs');
+        return;
+      }
       const sourceHeaders=Object.keys(raw[0]||{});
       const missing=AST_HEADERS.filter(header=>!sourceHeaders.some(key=>norm(key)===norm(header)));
       if(missing.length)throw new Error('В Excel відсутні обов’язкові колонки: '+missing.join(', '));
@@ -208,7 +230,6 @@ export default function App(){
         row.SIR_Category=row.SIR_Category.toUpperCase();
         return row;
       });
-      if(!normalized.length)throw new Error('У файлі немає записів.');
       const table=sheets.AST_Data;
       if(!table?.headers.length)throw new Error('Аркуш AST_Data не має заголовків.');
       await appendSheetRows('AST_Data',table.headers,normalized.map(row=>table.headers.map(header=>String((row as unknown as SheetRecord)[header]??''))));
