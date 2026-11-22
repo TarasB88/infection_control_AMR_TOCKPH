@@ -25,7 +25,7 @@ export type GoogleSheetsConnection = {
   worksheetName: string;
   direction: SyncDirection;
   enabled: boolean;
-  // Credentials are intentionally excluded. Store them as Worker secrets.
+  // OAuth runs in the browser. The app stores no Google client secret or service-account key.
 };
 export type SyncRunSummary = {
   runId: string;
