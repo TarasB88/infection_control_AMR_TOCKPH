@@ -214,6 +214,34 @@ export const updateSheetRow = async (
   await response.json().catch(() => undefined);
 };
 
+export const getSpreadsheetMetadata = async (): Promise<Array<{ title: string; sheetId: number }>> => {
+  const fields = encodeURIComponent('sheets.properties(title,sheetId)');
+  const response = await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=${fields}`,
+  );
+  const data = await response.json() as { sheets?: Array<{ properties?: { title?: string; sheetId?: number } }> };
+  return (data.sheets || []).map(sheet => ({
+    title: sheet.properties?.title || '',
+    sheetId: Number(sheet.properties?.sheetId ?? -1),
+  })).filter(sheet => sheet.title && sheet.sheetId >= 0);
+};
+
+export const createMissingSheetTabs = async (names: string[]): Promise<void> => {
+  const existing = new Set((await getSpreadsheetMetadata()).map(sheet => sheet.title));
+  const missing = names.filter(name => !existing.has(name));
+  if (!missing.length) return;
+  await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: missing.map(title => ({ addSheet: { properties: { title } } })),
+      }),
+    },
+  );
+};
+
 export const getSpreadsheetTabs = async (): Promise<string[]> => {
   const fields = encodeURIComponent('sheets.properties(title,sheetId)');
   const response = await googleFetch(
