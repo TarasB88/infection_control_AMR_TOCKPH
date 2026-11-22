@@ -749,8 +749,8 @@ export default {
       }
     }
 
-    // Facility source sheets are read directly through Google Sheets API.
-    // Never publish source CSVs: they may contain director or other contact details.
+    // Facility directory sources are fetched server-side using Google's XLSX export endpoint.
+    // The export is read-only and only the selected gid is parsed; never expose source rows through this route.
     if (url.pathname === '/api/facilities' && request.method === 'GET') {
       const authenticated = await getAuthenticatedUser(request, env);
       if (authenticated.error) return authenticated.error;
@@ -774,7 +774,7 @@ export default {
           records,
           count: records.length,
           summary: result.summary ?? null,
-          source: 'private_google_sheets_bridge',
+          source: 'google_sheets_xlsx_export',
           fetchedAt: new Date().toISOString(),
         });
       } catch (error) {
