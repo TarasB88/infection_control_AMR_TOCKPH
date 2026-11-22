@@ -7,7 +7,7 @@ import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import {
   appendSheetRows, clearGoogleSession, createMissingSheetTabs, getGoogleProfile, getSpreadsheetTabs,
-  googleClientConfigured, GOOGLE_SHEET_TABS, readSheetTable, selectSpreadsheetWithPicker, signInWithGoogle,
+  googleClientConfigured, getMissingGoogleConfiguration, GOOGLE_SHEET_TABS, readSheetTable, selectSpreadsheetWithPicker, signInWithGoogle,
   type GoogleProfile, type GoogleSheetTab, type SheetRecord,
 } from './lib/google-sheets';
 
@@ -269,8 +269,8 @@ export default function App(){
   if(!user){
     return <div className="authscreen"><div className="authcard"><ShieldCheck/><h1>IPC & AMR Monitoring</h1>
       {authLoading?<p>Підключення Google Sheets…</p>:<><p>{authError||'Увійдіть через Google, щоб працювати з єдиною книгою IPC та AMR.'}</p>
-      <button className="primary" disabled={!googleClientConfigured()} onClick={()=>void signIn()}>{googleClientConfigured()?'Увійти через Google':'Потрібно налаштувати OAuth Client ID'}</button>
-      {!googleClientConfigured()&&<small>Збірці потрібен публічний VITE_GOOGLE_CLIENT_ID. Це ідентифікатор OAuth-застосунку, не секрет і не пароль.</small>}
+      <button className="primary" disabled={!googleClientConfigured()} onClick={()=>void signIn()}>{googleClientConfigured()?'Увійти через Google':'Налаштування Google Cloud не завершене'}</button>
+      {!googleClientConfigured()&&<small>У GitHub Actions → Variables потрібно додати такі публічні параметри: <b>{getMissingGoogleConfiguration().join(', ')}</b>. Це не секрети й не паролі. Докладна інструкція: <a href="https://github.com/TarasB88/infection_control_AMR_TOCKPH/blob/main/docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md" target="_blank" rel="noreferrer">налаштування Google Sheets</a>.</small>}
       <small>Google-акаунт повинен мати доступ до робочої книги в Google Drive. Після входу роль перевіряється за аркушем Users.</small></>}
     </div></div>;
   }
