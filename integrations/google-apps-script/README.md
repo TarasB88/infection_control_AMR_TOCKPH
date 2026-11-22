@@ -26,7 +26,7 @@ This feature is still **staged**. It has not been authorized against the live sp
    - `BRIDGE_TOKEN` = a unique random value of at least 32 characters.
 4. Make sure the account that owns/runs the Apps Script has permission to read both source spreadsheets listed above and edit the target spreadsheet.
 5. Deploy → **New deployment** → **Web app**. Execute as the spreadsheet owner. Restrict access to the narrowest available audience compatible with the Worker-to-Apps-Script call. If "Anyone" is required by the deployment model, the random bridge token is mandatory and must remain server-side only.
-6. Complete Google's authorization prompts for spreadsheet access and trigger management. If the dashboard cannot create triggers on first use, select `setupFacilitiesAutoSync` in the Apps Script editor, click Run, and approve the requested scopes. This one-time helper enables the edit and hourly triggers; it is safe to run again because trigger creation is idempotent.
+6. Complete Google's authorization prompts for spreadsheet access and trigger management. If the dashboard cannot create triggers on first use, select `setupFacilitiesAutoSync` in the Apps Script editor, click Run, and approve the requested scopes. This one-time helper enables the edit, change, and hourly triggers; it is safe to run again because trigger creation is idempotent.
 7. Configure Cloudflare Worker secrets:
    - `GOOGLE_SHEETS_BRIDGE_URL` = the deployed Web App URL.
    - `GOOGLE_SHEETS_BRIDGE_TOKEN` = the same secret as `BRIDGE_TOKEN`.
@@ -39,7 +39,7 @@ Do not send the bridge token in chat or put it in frontend code.
 
 The administrator can enable or disable automatic refresh from the dashboard's Google Sheets integration panel:
 
-- Installable `onEdit` and `onChange` triggers are attached to each source spreadsheet. Cell edits and structural changes are debounced for 60 seconds, so nearby changes are grouped into one synchronization.
+- Installable `onEdit` and `onChange` triggers are attached to each source spreadsheet. Cell edits and structural changes are debounced for about 60 seconds, so nearby changes are grouped into one synchronization.
 - A time-driven trigger performs a reconciliation every hour as a fallback for API/import changes that do not fire spreadsheet edit triggers. Apps Script may schedule the hourly run within its hourly window rather than at an exact minute.
 - The dashboard button **Оновити зараз → Facilities** performs an immediate source read, shows the changes to be applied, and asks for confirmation before writing.
 - The administrator can inspect active edit/change trigger counts, last successful run, last error, and pending debounce status in the integration panel.
