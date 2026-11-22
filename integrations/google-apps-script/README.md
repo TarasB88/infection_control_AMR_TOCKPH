@@ -16,7 +16,13 @@ The Apps Script bridge connects the IPC & AMR dashboard to the target workbook:
 - Existing target rows are not cleared. Empty source values do not erase existing values; unmapped columns and formula cells are preserved. Ambiguous duplicate EDRPOU values are skipped rather than guessed.
 - The Worker exposes admin-only preview, manual refresh, and automatic-sync controls. Manual sync attempts are recorded in the D1 audit log; automatic run status is stored in Apps Script Properties.
 
-This feature is still **staged**. It has not been authorized against the live spreadsheets or deployed to the production Worker. Actual source/target headers and row counts must be validated with the preview action after setup. The code does not create, rename, or clear worksheets.
+The source-reader and Worker/UI code is now implemented and passes the build check, but the live bridge has **not yet been authorized against the private spreadsheets or deployed to the production Worker**. Actual source headers, permissions, row counts, and returned records must be validated after setup. The code does not create, rename, or clear worksheets.
+
+## Deployment notes
+
+Routine pushes to `main` build and deploy the Worker without applying D1 migrations. This lets a frontend/API-only update be published using a Cloudflare token with Worker deployment permissions, without requiring D1 write permission on every release.
+
+To apply pending D1 migrations deliberately, run the GitHub Actions workflow **Deploy IPC AMR dashboard to Cloudflare Workers** manually and set `apply_d1_migrations` to `true`. Do this only when a release includes a new migration and after confirming the migration contents.
 
 ## One-time setup in the spreadsheet owner's Google account
 
