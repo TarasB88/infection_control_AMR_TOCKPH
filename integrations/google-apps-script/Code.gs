@@ -78,6 +78,8 @@ function doPost(e) {
     if (!sheet) return output_({ ok: false, error: 'sheet_not_found', sheet: sheetName }, 404);
 
     if (action === 'getRows') {
+      // Credentials are never available through the generic bridge API.
+      if (sheetName === 'Users') return output_({ ok: false, error: 'users_sheet_requires_dedicated_auth_flow' });
       const lastRow = sheet.getLastRow();
       const lastCol = sheet.getLastColumn();
       if (lastRow < 1 || lastCol < 1) return output_({ ok: true, sheet: sheetName, headers: [], rows: [] });
@@ -93,6 +95,8 @@ function doPost(e) {
     }
 
     if (action === 'upsertRows') {
+      // Prevent accidental or generic writes to the credential registry.
+      if (sheetName === 'Users') return output_({ ok: false, error: 'users_sheet_is_read_only_via_generic_bridge' });
       if (!Array.isArray(body.rows) || body.rows.length > 1000) return output_({ ok: false, error: 'invalid_rows' }, 400);
       const keyColumn = String(body.keyColumn || '');
       const headers = sheet.getLastColumn()
