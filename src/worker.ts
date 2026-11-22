@@ -783,9 +783,11 @@ export default {
         return json({
           error: 'facilities_unavailable',
           message,
-          hint: status === 503
-            ? 'Приватний зв’язок із Google Sheets не налаштований у Worker.'
-            : 'Перевірте секрети сервісного облікового запису Cloudflare та доступ до таблиць Google.',
+          hint: message.startsWith('source_export_http_')
+            ? 'Перевірте, чи доступне джерело для прямого XLSX export без входу в Google, а також чи правильний GID аркуша. Не відкривайте публічно таблиці з персональними або пацієнтськими даними.'
+            : status === 503
+              ? 'Приватний зв’язок із цільовою Google-таблицею не налаштований у Worker.'
+              : 'Перевірте доступ до вихідних Google-таблиць і налаштування приватного Sheets API для цільової книги.',
         }, status);
       }
     }
