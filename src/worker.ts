@@ -1,6 +1,7 @@
 type Role='admin'|'operator'|'analyst';
 type Sheet='Facilities'|'Facility_IPC_Profile'|'IPC_Visits'|'IPC_Assessments'|'Recommendations'|'Legal_Acts'|'Training_Events'|'Training_Facility_Stats'|'AST_Data'|'WGS_Staging'|'Dictionaries'|'Users';
-interface Env{ASSETS:{fetch(r:Request):Promise<Response>};GOOGLE_SERVICE_ACCOUNT_EMAIL:string;GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY:string;GOOGLE_SPREADSHEET_ID:string;SESSION_SECRET:string;BOOTSTRAP_ADMIN_USERNAME?:string;BOOTSTRAP_ADMIN_PASSWORD_HASH?:string;BOOTSTRAP_ADMIN_DISPLAY_NAME?:string}
+interface RateLimitBinding{limit(input:{key:string;delta?:number}):Promise<{success:boolean}>}
+interface Env{ASSETS:{fetch(r:Request):Promise<Response>};LOGIN_IP_LIMITER:RateLimitBinding;LOGIN_USERNAME_LIMITER:RateLimitBinding;GOOGLE_SERVICE_ACCOUNT_EMAIL:string;GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY:string;GOOGLE_SPREADSHEET_ID:string;SESSION_SECRET:string;BOOTSTRAP_ADMIN_USERNAME?:string;BOOTSTRAP_ADMIN_PASSWORD_HASH?:string;BOOTSTRAP_ADMIN_DISPLAY_NAME?:string}
 interface User{ id:string;username:string;email:string;fullName:string;role:Role;allFacilities:boolean;facilityCodes:string[];mustChangePassword:boolean }
 const SHEETS:Sheet[]=['Facilities','Facility_IPC_Profile','IPC_Visits','IPC_Assessments','Recommendations','Legal_Acts','Training_Events','Training_Facility_Stats','AST_Data','WGS_Staging','Dictionaries','Users'];
 const te=new TextEncoder(),td=new TextDecoder();
@@ -97,6 +98,12 @@ async function handle(req:Request,e:Env):Promise<Response>{
  if(p==='/api/auth/login'&&req.method==='POST'){
   const b=await req.json() as {username?:string;password?:string},name=String(b.username||'').trim().toLowerCase(),pass=String(b.password||'');
   if(!name||!pass||pass.length>256)return reply({error:'Введіть логін і пароль.'},400);
+  const ipKey=req.headers.get('CF-Connecting-IP')||'unknown';
+  const [ipLimit,usernameLimit]=await Promise.all([
+   e.LOGIN_IP_LIMITER.limit({key:ipKey}),
+   e.LOGIN_USERNAME_LIMITER.limit({key:name})
+  ]);
+  if(!ipLimit.success||!usernameLimit.success)return reply({error:'Забагато спроб входу. Спробуйте ще раз через хвилину.'},429,{'Retry-After':'60'});
   const table=await readTable(e,'Users');
   if(!table.rows.length&&e.BOOTSTRAP_ADMIN_USERNAME&&e.BOOTSTRAP_ADMIN_PASSWORD_HASH){
    if(!table.headers.length)throw Error('Спочатку додайте рядок заголовків до аркуша Users.');
