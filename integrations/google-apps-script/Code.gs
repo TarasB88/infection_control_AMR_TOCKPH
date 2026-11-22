@@ -53,6 +53,25 @@ function doPost(e) {
       });
     }
 
+    if (action === 'inspectSheets') {
+      return output_({
+        ok: true,
+        spreadsheetId: ssId,
+        sheets: ss.getSheets().map(sheet => {
+          const lastColumn = sheet.getLastColumn();
+          const headers = lastColumn > 0
+            ? sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0].map(v => String(v).trim())
+            : [];
+          return {
+            name: sheet.getName(),
+            rows: Math.max(0, sheet.getLastRow() - 1),
+            columns: lastColumn,
+            headers
+          };
+        })
+      });
+    }
+
     const sheetName = String(body.sheet || '');
     if (!CONFIG.allowedSheets.includes(sheetName)) return output_({ ok: false, error: 'sheet_not_allowed' }, 400);
     const sheet = ss.getSheetByName(sheetName);
