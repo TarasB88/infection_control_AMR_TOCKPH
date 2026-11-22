@@ -33,7 +33,7 @@ async function readTable(e:Env,s:Sheet){
  const d=await gfetch(e,"'"+s.replace(/'/g,"''")+"'!A:ZZ") as {values?:unknown[][]},v=d.values||[],headers=(v[0]||[]).map(x=>String(x??'').trim());
  if(!headers.length)return{headers:[],rows:[]};
  if(headers.some(x=>!x)||new Set(headers.map(x=>x.toLowerCase())).size!==headers.length)throw Error('Аркуш '+s+': некоректні або дубльовані заголовки.');
- const rows=v.slice(1).map(a=>{const o:Record<string,string>={};headers.forEach((h,i)=>o[h]=String(a[i]??'').trim());return o;}).filter(o=>Object.values(o).some(x=>x!==''));
+ const rows=v.slice(1).map((a,idx)=>{const o:Record<string,string>={__rowNumber:String(idx+2)};headers.forEach((h,i)=>o[h]=String(a[i]??'').trim());return o;}).filter(o=>headers.some(h=>o[h]!==''));
  return{headers,rows};
 }
 const col=(n:number)=>{let s='';while(n){const r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26);}return s;};
@@ -89,18 +89,28 @@ async function handle(req:Request,e:Env):Promise<Response>{
   }
   const r=table.rows.find(x=>String(x.Username||'').trim().toLowerCase()===name);
   if(!r||!yes(r.Is_Active)||!await passwordOK(pass,r.Password_Hash||''))return reply({error:'Неправильний логін або пароль, або обліковий запис неактивний.'},401);
-  const idx=table.rows.indexOf(r)+2;r.Last_Login_At=new Date().toISOString();await update(e,'Users',idx,table.headers,table.headers.map(h=>r[h]??''));
+  const idx=Number(r.__rowNumber)||table.rows.indexOf(r)+2;r.Last_Login_At=new Date().toISOString();await update(e,'Users',idx,table.headers,table.headers.map(h=>r[h]??''));
   const u=toUser(r);return reply({user:u},200,{'Set-Cookie':cookie(await makeSession(u,e))});
  }
  if(p==='/api/auth/logout'&&req.method==='POST')return reply({ok:true},200,{'Set-Cookie':cookie('',0)});
  if(p==='/api/auth/me'&&req.method==='GET'){const u=await session(req,e);return u?reply({user:u}):reply({user:null},401);}
  const u=await session(req,e);if(!u)return reply({error:'Потрібно увійти в систему.'},401);
+ if(p==='/api/auth/change-password'&&req.method==='POST'){
+  const b=await req.json() as {currentPassword?:string;newPassword?:string},current=String(b.currentPassword||''),next=String(b.newPassword||'');
+  if(next.length<12||next.length>128)return reply({error:'Новий пароль має містити від 12 до 128 символів.'},400);
+  const t=await readTable(e,'Users'),r=t.rows.find(x=>String(x.Username||'').toLowerCase()===u.username.toLowerCase());
+  if(!r||!await passwordOK(current,r.Password_Hash||''))return reply({error:'Поточний пароль неправильний.'},401);
+  r.Password_Hash=await passwordHash(next);r.Must_Change_Password='FALSE';r.Updated_At=new Date().toISOString();
+  await update(e,'Users',Number(r.__rowNumber)||t.rows.indexOf(r)+2,t.headers,t.headers.map(h=>r[h]??''));
+  const updated={...u,mustChangePassword:false};return reply({user:updated},200,{'Set-Cookie':cookie(await makeSession(updated,e))});
+ }
+
  const m=p.match(/^\/api\/sheets\/([A-Za-z_]+)$/);
  if(m){
   const s=m[1] as Sheet;if(!SHEETS.includes(s))return reply({error:'Невідомий аркуш.'},404);
   if(s==='Users'&&u.role!=='admin')return reply({error:'Недостатньо прав.'},403);
   if(req.method==='GET'){
-   const t=await readTable(e,s),headers=t.headers.filter(h=>h!=='Password_Hash'&&h!=='Password'),rows=s==='Users'?t.rows.map(r=>{const x={...r};delete x.Password_Hash;delete x.Password;return x;}):scoped(s,t.rows,u);
+   const t=await readTable(e,s),headers=t.headers.filter(h=>h!=='Password_Hash'&&h!=='Password'),rows=s==='Users'?t.rows.map(r=>{const x={...r};delete x.Password_Hash;delete x.Password;delete x.__rowNumber;return x;}):scoped(s,t.rows,u).map(r=>{const x={...r};delete x.__rowNumber;return x;});
    return reply({headers,rows});
   }
   if(req.method==='POST'){
