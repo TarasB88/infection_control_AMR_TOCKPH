@@ -38,7 +38,7 @@ The read-only facility directory uses the same lightweight integration pattern a
 
 The Worker reads two allow-listed source tabs by spreadsheet ID and GID, parses CSV, matches facilities by EDRPOU, merges monitoring attributes, and returns only organizational fields. No Apps Script deployment, bridge token, or Google API credential is required for this read path.
 
-**Access prerequisite:** the two source tabs must be published or shared for read access without Google sign-in. Only publish the specific organizational tabs needed for the directory. Do not publish the target workbook's `Users` sheet, passwords, patient-level data, or other restricted content. The endpoint does not expose director, email, or phone fields.
+**Access prerequisite:** publish only the two required organizational tabs as CSV (`File → Share → Publish to web → select the individual sheet → CSV`). Do not publish an entire workbook if it contains other tabs or personal data. Store each generated CSV URL in the corresponding `publishedCsvUrl` property in `FACILITY_CSV_SOURCES` in `src/worker.ts`. The endpoint does not expose director, email, or phone fields. Google documents that individual sheets can be selected for publication and that published content updates when the source changes; review the published-content settings before publishing.
 
 This direct CSV path is read-only and does not write to D1 or back to Google Sheets. The AST import, protected administrative sheet inspection, and target-sheet upsert workflows still use the staged Apps Script bridge until they are separately migrated to an approved CSV or authenticated API design. D1 remains the system of record for user accounts, sessions, and persisted AMR data.
 
