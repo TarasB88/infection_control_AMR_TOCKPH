@@ -488,10 +488,30 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
     }
   }
   if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-  let body: { action?: unknown; sheet?: unknown };
+  let body: { action?: unknown; sheet?: unknown; confirm?: unknown };
   try { body = await request.json() as typeof body; } catch { return json({ error: 'invalid_json' }, 400); }
   const action = text(body.action);
   const sheet = text(body.sheet);
+
+  if (action === 'previewFacilities') {
+    try {
+      const result = await callGoogleSheetsBridge(env, { action: 'previewFacilitiesSync' });
+      return json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'facility_sync_preview_failed';
+      return json({ error: 'facility_sync_preview_failed', message }, 502);
+    }
+  }
+  if (action === 'syncFacilities') {
+    if (body.confirm !== true) return json({ error: 'confirmation_required', message: 'Перед записом потрібне явне підтвердження.' }, 400);
+    try {
+      const result = await callGoogleSheetsBridge(env, { action: 'syncFacilities', confirm: true });
+      return json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'facility_sync_failed';
+      return json({ error: 'facility_sync_failed', message }, 502);
+    }
+  }
   if (action === 'syncAst') {
     try {
       const result = await callGoogleSheetsBridge(env, { action: 'getRows', sheet: 'AST_Data' });
