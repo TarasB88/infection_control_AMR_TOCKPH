@@ -100,7 +100,7 @@ Worker перевіряє сесію, роль і доступ до заклад
 
 ## 6. Обмеження спроб входу
 
-У `wrangler.jsonc` визначено два Cloudflare Workers Rate Limiting bindings: `LOGIN_IP_LIMITER` і `LOGIN_USERNAME_LIMITER`. Worker застосовує їх до `POST /api/auth/login` за IP-адресою клієнта та нормалізованим логіном. У разі перевищення повертається HTTP 429 і `Retry-After: 60`.
+У `wrangler.jsonc` визначено два Cloudflare Workers Rate Limiting bindings: `LOGIN_IP_LIMITER` і `LOGIN_PAIR_LIMITER`. Worker застосовує їх до `POST /api/auth/login` за IP-адресою клієнта та парою IP-адреса + нормалізований логін; це уникає спільного блокування одного логіну для всіх працівників з інших IP-адрес. У разі перевищення повертається HTTP 429 і `Retry-After: 60`.
 
 Це приблизний rate limiting: лічильники локальні для кожної локації Cloudflare та синхронізуються у фоновому режимі. При розподіленому переборі або багатьох одночасних запитах фактична кількість спроб може перевищити поріг. Якщо для системи потрібне суворе глобальне обмеження, потрібен окремий Durable Object rate limiter або зовнішній WAF-рівень.
 
