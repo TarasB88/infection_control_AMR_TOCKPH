@@ -506,7 +506,28 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
     if (body.confirm !== true) return json({ error: 'confirmation_required', message: 'Перед записом потрібне явне підтвердження.' }, 400);
     try {
       const result = await callGoogleSheetsBridge(env, { action: 'syncFacilities', confirm: true });
-      return json(result);
+      let auditLogged = false;
+      if (env.DB) {
+        try {
+          const audit = await env.DB.prepare(
+            'INSERT INTO audit_log (id, actor_id, action, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?, ?)',
+          ).bind(
+            crypto.randomUUID(), actor.id, 'google_sheets_facilities_sync', 'google_sheet', 'Facilities',
+            JSON.stringify({
+              inserted: Number(result.inserted ?? 0),
+              updated: Number(result.updated ?? 0),
+              unchanged: Number(result.unchanged ?? 0),
+              sourceFacilities: Number((result.summary as Record<string, unknown> | undefined)?.sourceFacilities ?? 0),
+              duplicateRegistryIds: Number((result.summary as Record<string, unknown> | undefined)?.duplicateRegistryIds ?? 0),
+              duplicateTargetIds: Number((result.summary as Record<string, unknown> | undefined)?.duplicateTargetIds ?? 0),
+            }),
+          ).run();
+          auditLogged = audit.success;
+        } catch {
+          auditLogged = false;
+        }
+      }
+      return json({ ...result, auditLogged });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'facility_sync_failed';
       return json({ error: 'facility_sync_failed', message }, 502);
