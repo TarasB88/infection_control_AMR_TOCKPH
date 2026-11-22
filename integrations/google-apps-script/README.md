@@ -13,7 +13,7 @@ The Apps Script bridge connects the IPC & AMR dashboard to the target workbook:
   - Monitoring: `12GH5WBi9X6HOJ2QRPkj2-wlqG1XmE6O26hDMlU-EanQ`, tab GID `933221082`.
 - Facility matching by EDRPOU, preview of new/update counts, duplicate detection, and a confirmed upsert into `Facilities`.
 - Existing target rows are not cleared. Empty source values do not erase existing values; unmapped columns and formula cells are preserved. Ambiguous duplicate EDRPOU values are skipped rather than guessed.
-- The Worker exposes admin-only preview and sync actions. Successful sync attempts are recorded in the D1 audit log.
+- The Worker exposes admin-only preview, manual refresh, and automatic-sync controls. Manual sync attempts are recorded in the D1 audit log; automatic run status is stored in Apps Script Properties.
 
 This feature is still **staged**. It has not been authorized against the live spreadsheets or deployed to the production Worker. Actual source/target headers and row counts must be validated with the preview action after setup. The code does not create, rename, or clear worksheets.
 
@@ -26,7 +26,7 @@ This feature is still **staged**. It has not been authorized against the live sp
    - `BRIDGE_TOKEN` = a unique random value of at least 32 characters.
 4. Make sure the account that owns/runs the Apps Script has permission to read both source spreadsheets listed above and edit the target spreadsheet.
 5. Deploy → **New deployment** → **Web app**. Execute as the spreadsheet owner. Restrict access to the narrowest available audience compatible with the Worker-to-Apps-Script call. If "Anyone" is required by the deployment model, the random bridge token is mandatory and must remain server-side only.
-6. Complete Google's authorization prompts for spreadsheet access.
+6. Complete Google's authorization prompts for spreadsheet access and trigger management. If the dashboard cannot create triggers on first use, select `setupFacilitiesAutoSync` in the Apps Script editor, click Run, and approve the requested scopes. This one-time helper enables the edit and hourly triggers; it is safe to run again because trigger creation is idempotent.
 7. Configure Cloudflare Worker secrets:
    - `GOOGLE_SHEETS_BRIDGE_URL` = the deployed Web App URL.
    - `GOOGLE_SHEETS_BRIDGE_TOKEN` = the same secret as `BRIDGE_TOKEN`.
