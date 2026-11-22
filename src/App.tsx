@@ -110,7 +110,7 @@ export default function App(){
    const data=await readApiJson<{records?:FacilityRecord[];count?:number;message?:string;error?:string}>(response);
    if(!response.ok)throw new Error(data.message||data.error||'HTTP '+response.status);
    setFacilities(Array.isArray(data.records)?data.records:[]);
-   if(!Array.isArray(data.records)||data.records.length===0)setFacilityError('Джерело відповіло, але не повернуло жодного закладу. Перевірте, чи опубліковано для читання без входу Google обидва аркуші-джерела CSV.');
+   if(!Array.isArray(data.records)||data.records.length===0)setFacilityError('Джерело відповіло, але не повернуло жодного закладу. Перевірте, чи опубліковано окремо обидва аркуші-джерела у форматі CSV.');
   }catch(error){
    setFacilities([]);
    setFacilityError(error instanceof Error?error.message:'Не вдалося завантажити реєстр закладів.');
