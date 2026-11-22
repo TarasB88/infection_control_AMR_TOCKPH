@@ -98,9 +98,23 @@ function doPost(e) {
 
     if (action === 'getFacilities') {
       const merged = getMergedFacilityRecords_();
+      // Return organizational fields only. Contact fields stay inside the private source spreadsheets.
+      const records = merged.records.map(record => ({
+        edrpou: record.edrpou || '',
+        name: record.name || '',
+        address: record.address || '',
+        oblast: record.oblast || '',
+        district: record.district || '',
+        hromada: record.hromada || '',
+        settlement: record.settlement || '',
+        ownership: record.ownership || '',
+        care_level: record.care_level || '',
+        network_status: record.network_status || '',
+        monitoring_years: record.monitoring_years || ''
+      }));
       return output_({
         ok: true,
-        records: merged.records,
+        records: records,
         summary: {
           sourceRegistryRows: merged.sourceA.rowCount,
           sourceMonitoringRows: merged.sourceB.rowCount,
