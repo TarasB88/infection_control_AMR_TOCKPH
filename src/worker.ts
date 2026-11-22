@@ -493,6 +493,15 @@ const handleGoogleSheetsAdmin = async (request: Request, env: WorkerEnv, actor: 
   const action = text(body.action);
   const sheet = text(body.sheet);
 
+  if (['getFacilitiesSyncStatus', 'enableFacilitiesAutoSync', 'disableFacilitiesAutoSync'].includes(action)) {
+    try {
+      const result = await callGoogleSheetsBridge(env, { action });
+      return json({ autoSync: result.autoSync ?? null, ok: result.ok === true, created: result.created ?? [], deleted: result.deleted ?? 0 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'facility_auto_sync_configuration_failed';
+      return json({ error: 'facility_auto_sync_configuration_failed', message }, 502);
+    }
+  }
   if (action === 'previewFacilities') {
     try {
       const result = await callGoogleSheetsBridge(env, { action: 'previewFacilitiesSync' });
