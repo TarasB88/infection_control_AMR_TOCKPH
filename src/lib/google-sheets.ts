@@ -49,7 +49,9 @@ export const GOOGLE_SHEETS_ID = spreadsheetId;
 export const GOOGLE_SHEET_TABS = [
   'Facilities',
   'Facility_IPC_Profile',
+  'IPC_Visits',
   'IPC_Assessments',
+  'Recommendations',
   'Legal_Acts',
   'Training_Events',
   'Training_Facility_Stats',
