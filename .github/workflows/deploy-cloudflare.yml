@@ -26,29 +26,19 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
-      - name: Validate required Google configuration
+      - name: Validate OAuth configuration for production deploy
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
-          VITE_GOOGLE_API_KEY: ${{ vars.GOOGLE_API_KEY }}
-          VITE_GOOGLE_APP_ID: ${{ vars.GOOGLE_CLOUD_PROJECT_NUMBER }}
         run: |
-          missing=()
-          for name in VITE_GOOGLE_CLIENT_ID VITE_GOOGLE_API_KEY VITE_GOOGLE_APP_ID; do
-            if [[ -z "${!name}" ]]; then
-              echo "::error title=Missing GitHub Actions variable::$name is empty. Add the matching repository variable before building."
-              missing+=("$name")
-            fi
-          done
-          if (( ${#missing[@]} > 0 )); then
+          if [[ -z "$VITE_GOOGLE_CLIENT_ID" ]]; then
+            echo "::error title=Missing GitHub Actions variable::GOOGLE_OAUTH_CLIENT_ID is required for private Google Sheets OAuth."
             exit 1
           fi
       - name: Build frontend and type-check
         run: npm run build
         env:
           VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
-          VITE_GOOGLE_API_KEY: ${{ vars.GOOGLE_API_KEY }}
-          VITE_GOOGLE_APP_ID: ${{ vars.GOOGLE_CLOUD_PROJECT_NUMBER }}
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -67,13 +57,9 @@ jobs:
         run: npm run build
         env:
           VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
-          VITE_GOOGLE_API_KEY: ${{ vars.GOOGLE_API_KEY }}
-          VITE_GOOGLE_APP_ID: ${{ vars.GOOGLE_CLOUD_PROJECT_NUMBER }}
       - name: Deploy static app to Cloudflare Worker
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 827df3dff7217c483bae6b6fc62083d8
           VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
-          VITE_GOOGLE_API_KEY: ${{ vars.GOOGLE_API_KEY }}
-          VITE_GOOGLE_APP_ID: ${{ vars.GOOGLE_CLOUD_PROJECT_NUMBER }}

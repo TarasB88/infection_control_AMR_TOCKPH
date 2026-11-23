@@ -9,11 +9,12 @@
 - Cloudflare Worker лише роздає статичний frontend.
 - Користувач входить через Google Identity Services (OAuth).
 - Браузер напряму читає та записує Google Sheets API; service account, Google client secret, private key і Apps Script не використовуються.
-- OAuth Client ID, обмежений API key та числовий Google Cloud project number — публічні параметри збірки, не секрети. Picker використовує scope `drive.file` і дає доступ до вибраної книги.
+- Єдиний параметр збірки Google — OAuth Client ID (`VITE_GOOGLE_CLIENT_ID`).
+- Після входу користувач вставляє URL або ID приватної Google-книги. Застосунок працює через Google Sheets API зі scope `spreadsheets`; Google-акаунт має бути доданий до книги у Drive.
 
 ## Робочі аркуші
 
-`Facilities`, `Facility_IPC_Profile`, `IPC_Visits`, `IPC_Assessments`, `Recommendations`, `Training_Events`, `Training_Facility_Stats`, `AST_Data`, `WGS_Staging`, `Legal_Acts`, `Dictionaries`, `Users`.
+`Facilities`, `Facility_IPC_Profile`, `IPC_Visits`, `IPC_Assessments`, `Recommendations`, `Training_Events`, `Training_Facility_Stats`, `AST_Data`, `WGS_Staging`, `Legal_Acts` та `Dictionaries`.
 
 Відсутні аркуші створюються автоматично, а початкові заголовки додаються лише до порожніх вкладок. Уже наявні заголовки не перезаписуються.
 
@@ -24,14 +25,13 @@
 3. Створіть OAuth Client ID типу Web application.
 4. Додайте production origin у Authorized JavaScript origins.
 5. У GitHub → Settings → Secrets and variables → Actions → Variables створіть змінну `GOOGLE_OAUTH_CLIENT_ID` з цим Client ID.
-6. Переконайтеся, що перший адміністратор має доступ до робочої книги в Google Drive.
-7. Перший Google-акаунт, який увійде, якщо Users ще не містить профілів, стане адміністратором. Після цього адміністратор додає інші email у Users.
+6. Надайте працівникам потрібні права на приватну робочу книгу Google Sheets у Google Drive. Користувач вставляє URL або ID книги під час підключення.
 
 Додаткові параметри наведені в [Google Sheets setup](docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md).
 
 ## Важливе обмеження безпеки
 
-Google Sheets permissions діють на всю книгу. Ролі з аркуша Users керують інтерфейсом, але не є серверним контролем доступу до окремих вкладок або рядків. Кожен користувач, якому надано доступ до книги та який авторизувався, технічно може прочитати/змінити її вкладки через Google API.
+Google Sheets permissions діють на всю книгу. Кожен користувач, якому надано доступ до книги та який авторизувався, технічно може прочитати/змінити її вкладки через Google API.
 
 Не зберігайте прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте заздалегідь погоджені псевдоніми. Не надавайте доступ до книги тим, кому не можна бачити всі її дані.
 

@@ -19,22 +19,7 @@ type GoogleSheetsResponse = {
   values?: unknown[][];
 };
 
-type GooglePickerBuilder = {
-  addView(view: unknown): GooglePickerBuilder;
-  setOAuthToken(token: string): GooglePickerBuilder;
-  setDeveloperKey(key: string): GooglePickerBuilder;
-  setAppId(appId: string): GooglePickerBuilder;
-  setTitle(title: string): GooglePickerBuilder;
-  setCallback(callback: (data: { action?: string; docs?: Array<{ id?: string; name?: string }> }) => void): GooglePickerBuilder;
-  build(): { setVisible(visible: boolean): void };
-};
-type GooglePickerApi = {
-  ViewId: { SPREADSHEETS: unknown };
-  Action: { PICKED: string; CANCEL: string };
-  PickerBuilder: new () => GooglePickerBuilder;
-};
 type GoogleGIS = {
-  picker?: GooglePickerApi;
   accounts: {
     oauth2: {
       initTokenClient(options: {
@@ -50,23 +35,39 @@ type GoogleGIS = {
 declare global {
   interface Window {
     google?: GoogleGIS;
-    gapi?: { load(name: string, options: { callback: () => void; onerror?: () => void; ontimeout?: () => void; timeout?: number }): void };
   }
 }
 
 const configuredClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
-const pickerApiKey = import.meta.env.VITE_GOOGLE_API_KEY?.trim() ?? '';
-const googleCloudProjectNumber = import.meta.env.VITE_GOOGLE_APP_ID?.trim() ?? '';
 let selectedSpreadsheetId = '';
 let selectedSpreadsheetName = '';
-const scopes = 'openid email profile https://www.googleapis.com/auth/drive.file';
+const scopes = 'openid email profile https://www.googleapis.com/auth/spreadsheets';
 let accessToken = '';
 let expiresAt = 0;
 
 export const getSelectedSpreadsheet = () => ({ id: selectedSpreadsheetId, name: selectedSpreadsheetName });
 const requireSpreadsheetId = (): string => {
-  if (!selectedSpreadsheetId) throw new Error('Спочатку виберіть робочу Google-книгу через вікно Google Picker.');
+  if (!selectedSpreadsheetId) throw new Error('Спочатку вкажіть URL або ID робочої Google-книги.');
   return selectedSpreadsheetId;
+};
+
+/** Accepts either a Google Sheets URL or a spreadsheet ID pasted by the user. */
+export const setSelectedSpreadsheet = (input: string): { id: string; name: string } => {
+  const value = input.trim();
+  if (!value) throw new Error('Вкажіть URL або ID робочої Google-книги.');
+  let id = value;
+  if (/^https?:\/\//i.test(value)) {
+    let url: URL;
+    try { url = new URL(value); } catch { throw new Error('Посилання на Google Sheets має некоректний формат.'); }
+    if (url.hostname !== 'docs.google.com' || !url.pathname.startsWith('/spreadsheets/d/')) {
+      throw new Error('Потрібне посилання формату https://docs.google.com/spreadsheets/d/…');
+    }
+    id = url.pathname.split('/')[3] || '';
+  }
+  if (!/^[a-zA-Z0-9_-]{20,}$/.test(id)) throw new Error('Не вдалося визначити ID таблиці. Вставте повне посилання Google Sheets або коректний ID.');
+  selectedSpreadsheetId = id;
+  selectedSpreadsheetName = 'Google Sheets · ' + id.slice(0, 8) + '…';
+  return { id, name: selectedSpreadsheetName };
 };
 export const GOOGLE_SHEET_TABS = [
   'Facilities',
@@ -86,8 +87,6 @@ export type GoogleSheetTab = typeof GOOGLE_SHEET_TABS[number];
 export const getMissingGoogleConfiguration = (): string[] => {
   const missing: string[] = [];
   if (!configuredClientId) missing.push('VITE_GOOGLE_CLIENT_ID');
-  if (!pickerApiKey) missing.push('VITE_GOOGLE_API_KEY');
-  if (!googleCloudProjectNumber) missing.push('VITE_GOOGLE_APP_ID');
   return missing;
 };
 export const googleClientConfigured = (): boolean => getMissingGoogleConfiguration().length === 0;
@@ -114,7 +113,7 @@ export const getGoogleAccessToken = (): string => {
  */
 export const signInWithGoogle = (): Promise<string> => {
   if (!configuredClientId) {
-    return Promise.reject(new Error('Не задано VITE_GOOGLE_CLIENT_ID. Потрібні публічні параметри Google Cloud: OAuth Client ID, API key і номер проєкту для Google Picker.'));
+    return Promise.reject(new Error('Не задано VITE_GOOGLE_CLIENT_ID. Додайте OAuth Client ID у GitHub Actions Variables.'));
   }
   if (!window.google?.accounts?.oauth2) {
     return Promise.reject(new Error('Бібліотека Google Identity Services ще не завантажилася. Оновіть сторінку та повторіть вхід.'));
@@ -177,47 +176,6 @@ export const getGoogleProfile = async (): Promise<GoogleProfile> => {
     throw new Error('Google не повернув підтверджену адресу електронної пошти.');
   }
   return profile;
-};
-
-const ensurePickerLoaded = async (): Promise<GooglePickerApi> => {
-  if (!pickerApiKey || !googleCloudProjectNumber) {
-    throw new Error('Для Google Picker потрібні VITE_GOOGLE_API_KEY і VITE_GOOGLE_APP_ID. API key має бути обмежений за HTTP referrer.');
-  }
-  if (!window.gapi) throw new Error('Google Picker API ще не завантажився. Оновіть сторінку та повторіть вхід.');
-  await new Promise<void>((resolve, reject) => {
-    window.gapi!.load('picker', {
-      callback: resolve,
-      onerror: () => reject(new Error('Не вдалося завантажити Google Picker API.')),
-      ontimeout: () => reject(new Error('Час очікування Google Picker API вичерпано.')),
-      timeout: 10000,
-    });
-  });
-  if (!window.google?.picker) throw new Error('Google Picker не ініціалізовано.');
-  return window.google.picker;
-};
-
-export const selectSpreadsheetWithPicker = async (): Promise<{ id: string; name: string }> => {
-  const token = getGoogleAccessToken();
-  const pickerApi = await ensurePickerLoaded();
-  return new Promise((resolve, reject) => {
-    const picker = new pickerApi.PickerBuilder()
-      .addView(pickerApi.ViewId.SPREADSHEETS)
-      .setOAuthToken(token)
-      .setDeveloperKey(pickerApiKey)
-      .setAppId(googleCloudProjectNumber)
-      .setTitle('Виберіть робочу книгу IPC & AMR')
-      .setCallback(data => {
-        if (data.action === pickerApi.Action.PICKED && data.docs?.[0]?.id) {
-          selectedSpreadsheetId = data.docs[0].id;
-          selectedSpreadsheetName = data.docs[0].name || 'Google Sheets workbook';
-          resolve({ id: selectedSpreadsheetId, name: selectedSpreadsheetName });
-        } else if (data.action === pickerApi.Action.CANCEL) {
-          reject(new Error('Вибір робочої книги скасовано.'));
-        }
-      })
-      .build();
-    picker.setVisible(true);
-  });
 };
 
 const quoteSheet = (sheet: string): string => `'${sheet.replace(/'/g, "''")}'`;
