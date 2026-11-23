@@ -26,6 +26,15 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Validate OAuth configuration for production deploy
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          if [[ -z "$VITE_GOOGLE_CLIENT_ID" ]]; then
+            echo "::error title=Missing GitHub Actions variable::GOOGLE_OAUTH_CLIENT_ID is required for private Google Sheets OAuth."
+            exit 1
+          fi
       - name: Build frontend and type-check
         run: npm run build
         env:
