@@ -1,83 +1,96 @@
-# Google Sheets only: налаштування
+# Google Forms + Google Sheets: налаштування
 
 ## Архітектура
 
-Браузерний застосунок напряму читає та записує Google Sheets. Серверний застосунок не має бази даних, не зберігає сесії, не виконує Google OAuth від імені користувача і не отримує Google private key.
+- Google Sheets — єдина база даних.
+- Google Forms — форма внесення інформації в цю ж книгу.
+- Google Apps Script Web App — приватний міст, що виконується від імені власника таблиці.
+- Cloudflare Worker — серверний API та hosting frontend.
+- Користувачі дашборду входять за логіном і паролем. Браузерний Google OAuth не використовується.
+- Cloudflare D1 та будь-яка інша база даних не використовуються.
 
-- Cloudflare Worker: лише статичний frontend.
-- Дані: одна приватна Google-книга.
-- Вхід: персональний Google OAuth.
-- API: Google Sheets API напряму з браузера.
-- Немає D1, SQL, service account, client secret, private key, Apps Script.
+## 1. Підготувати Google-книгу
 
-Під час підключення користувач вставляє URL або ID робочої книги. Її ID зберігається лише в пам’яті вкладки браузера на час поточного сеансу.
+Відкрийте існуючу робочу Google-книгу IPC & AMR. Вона має залишатися приватною; не використовуйте Publish to web.
 
-## 1. Google Cloud project
+## 2. Додати Apps Script bridge
 
-1. Відкрийте Google Cloud Console та створіть або виберіть проєкт.
-2. Увімкніть **Google Sheets API**.
-3. Налаштуйте OAuth consent screen (назва застосунку, контакт, тип користувачів/аудиторія).
-4. Створіть credential типу **OAuth Client ID → Web application**.
-5. У **Authorized JavaScript origins** додайте:
-   - `https://infection-control-amr-tockph.burdataras.workers.dev`
-   - локальний origin для розробки, наприклад `http://localhost:5173`.
-   Не додавайте шлях, query string або `https://docs.google.com` до OAuth origins.
-6. Скопіюйте OAuth Client ID. Client ID є публічним параметром; не створюйте й не використовуйте client secret для цього SPA token flow.
+1. У Google-книзі відкрийте **Extensions → Apps Script**.
+2. У редакторі створіть/відкрийте файл `Code.gs` і вставте код із [integrations/google-apps-script/Code.gs](../integrations/google-apps-script/Code.gs).
+3. Збережіть проєкт.
+4. У списку функцій виберіть `setupBridge` та натисніть **Run**.
+5. Надайте запитані Google permissions. Функція збереже ID книги та згенерує секрет bridge у Script Properties, а також створить необхідні аркуші з початковими заголовками.
+6. Скопіюйте секрет, показаний у вікні завершення. Не надсилайте його в чат і не додавайте до GitHub.
 
-Для організаційного Google Workspace OAuth consent screen може вимагати внутрішній тип аудиторії та адміністративне схвалення. Scope `spreadsheets` надає застосунку доступ на читання й запис до таблиць, доступних цьому Google-акаунту; для зовнішньої OAuth-аудиторії Google може вимагати перевірку чутливого scope.
+## 3. Розгорнути Apps Script як Web App
 
-## 2. GitHub Actions variable
+1. Натисніть **Deploy → New deployment**.
+2. Тип: **Web app**.
+3. **Execute as:** Me (власник/редактор робочої книги).
+4. **Who has access:** Anyone.
+5. Натисніть Deploy та підтвердьте доступ.
+6. Скопіюйте URL Web App, який закінчується на `/exec`.
 
-У репозиторії відкрийте **Settings → Secrets and variables → Actions → Variables** і створіть:
+Доступ Anyone потрібен лише для серверного виклику з Worker. Сам Apps Script перевіряє випадковий секрет із тіла кожного запиту. Браузер напряму до Apps Script не звертається, а Google-книга не публікується.
+
+Після змін у Code.gs створіть нову версію deployment через **Deploy → Manage deployments → Edit → New version**.
+
+## 4. Налаштувати Cloudflare Worker secrets
+
+У Cloudflare Dashboard відкрийте Worker `infection-control-amr-tockph` → **Settings → Variables and Secrets** та додайте такі значення як **Secrets**:
 
 | Назва | Значення |
 |---|---|
-| `GOOGLE_OAUTH_CLIENT_ID` | Web OAuth Client ID з Google Cloud Console |
+| `SHEETS_SCRIPT_URL` | URL Apps Script Web App `/exec` |
+| `SHEETS_BRIDGE_SECRET` | секрет, показаний функцією `setupBridge()` |
+| `SESSION_SIGNING_SECRET` | випадковий унікальний секрет щонайменше 32 символи |
+| `BOOTSTRAP_KEY` | окремий випадковий одноразовий ключ створення першого адміністратора |
 
-Це GitHub Actions repository variable, не secret. Workflow передає її у Vite як `VITE_GOOGLE_CLIENT_ID`. Без Client ID застосунок збереться, але Google OAuth підключення буде недоступним.
+Для `SESSION_SIGNING_SECRET` та `BOOTSTRAP_KEY` використовуйте генератор випадкових значень, а не звичайний пароль. Не зберігайте їх у GitHub repository variables, frontend `.env`, коді або чаті. Worker secrets налаштовуються в Cloudflare, а не в Vite.
 
-Для локальної розробки створіть `.env.local` на основі `.env.example`. Після входу вставте повне посилання виду `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit` або сам ID. Не додавайте ID до GitHub Variables.
+Після збереження секретів перевірте, що нова версія Worker активна. Якщо користуєтеся локальним Wrangler, значення для локального запуску задаються в приватному `.dev.vars` (не комітити файл).
 
-## 3. Права на Google-книгу
+## 5. Створити першого адміністратора
 
-Надайте Google-акаунтам працівників доступ до робочої книги у Google Drive. Для запису їм потрібен Editor. Для читання достатній Viewer, але застосунок у поточній версії має функції запису, тож практично потрібен Editor.
+1. Відкрийте production URL дашборду.
+2. Під час першого запуску з'явиться форма початкового налаштування.
+3. Введіть `BOOTSTRAP_KEY`, логін, пароль (мінімум 12 символів), ПІБ та email.
+4. Після створення облікового запису додайте решту працівників у розділі **Користувачі**.
 
-Після першого входу:
-- кожен працівник має мати доступ до книги у Google Drive;
-- для запису даних потрібна роль Editor.
+Паролі зберігаються в `Users` тільки як PBKDF2-HMAC-SHA256 хеші з індивідуальною сіллю. Відновити початковий пароль із таблиці неможливо.
 
-## 4. Робочі вкладки
+## 6. Підключити Google Forms
 
-Застосунок перевіряє та створює такі вкладки, якщо вони відсутні:
+Для кожного модуля:
+1. Створіть Google Form.
+2. У вкладці **Responses** виберіть **Link to Sheets** і вкажіть ту саму робочу книгу IPC & AMR.
+3. Після створення вкладки відповідей перейменуйте її на відповідну назву:
+   - `Form_IPC_Visits`
+   - `Form_IPC_Assessments`
+   - `Form_Training_Events`
+   - `Form_AST_Data`
+   - `Form_WGS_Staging`
+4. Назви запитань налаштуйте так, щоб вони збігалися з назвами колонок цільового аркуша. Наприклад, для AST використовуйте `Hospital_ID`, `Hospital_Name`, `Sample_ID`, `Sampling_Date`, `Bacterial_Species`, `Antimicrobial_Agent`, `SIR_Category`, `Interpretation_Standard`.
+5. Додавайте лише необхідні поля. Для `Patient_ID` використовуйте погоджений псевдонім, не ПІБ чи номер медичної карти.
 
-| Аркуш | Призначення |
-|---|---|
-| Facilities | Реєстр закладів |
-| Facility_IPC_Profile | Організаційний IPC-профіль |
-| IPC_Visits | Моніторингові візити |
-| IPC_Assessments | Оцінювання за критеріями |
-| Recommendations | Коригувальні заходи |
-| Training_Events | Навчальні заходи |
-| Training_Facility_Stats | Охоплення закладів навчанням |
-| AST_Data | Результати AST |
-| WGS_Staging | Геномні результати |
-| Legal_Acts | Нормативно-правові акти |
-| Dictionaries | Довідники |
+Bridge автоматично приєднує відповіді з названих вкладок до відповідного набору даних при оновленні дашборду. Вихідна вкладка Google Forms залишається незміненою.
 
-Якщо вкладка порожня, застосунок записує стандартний рядок заголовків. Якщо заголовки вже існують, вони залишаються без змін.
+## 7. Ролі та права
 
-## 5. Patient_ID та клінічна інформація
+- `admin`: повний доступ, створення користувачів і зміна ролей/активності;
+- `operator`: перегляд і внесення записів;
+- `analyst`: перегляд без запису.
 
-Оскільки серверної псевдонімізації більше немає, не завантажуйте ПІБ, номер медичної карти, адресу, телефон, дату народження або інший прямий ідентифікатор. У Patient_ID має бути лише попередньо погоджений внутрішній псевдонім. Саме по собі хешування в браузері не перетворює клінічні дані на анонімні.
+Усі користувачі дашборду не повинні отримувати редакторський доступ до самої Google-книги. Bridge працює від імені власника. Поле `Facility_Codes` зберігається, але фільтрація рядків за закладами ще не реалізована.
 
-## 6. Межі доступу
+## 8. Розгортання Cloudflare
 
-Google Sheets permissions діють на всю книгу. У поточній архітектурі немає окремих прав на вкладки або рядки. Користувач із правом доступу до книги може обійти інтерфейс і прочитати/змінити її дані через Google API.
+GitHub Actions публікує Worker через Wrangler. Для CI/CD окремо потрібен чинний GitHub Actions secret `CLOUDFLARE_API_TOKEN` із правами Workers deployment і правильний Account ID. Цей токен не має стосунку до Google Sheets і не повинен передаватися в чат.
 
-Це не еквівалент row-level security або окремих прав на вкладки. Не надавайте доступ до книги тим, кому не можна переглядати її повністю. Для суворої ізоляції потрібні окремі книги з різними Drive permissions або серверний шар авторизації.
+## 9. Перевірка
 
-## 7. Cloudflare deploy
+- `GET /api/health` має повертати `sheetsBridgeConfigured: true`, `sessionConfigured: true` і `bootstrapConfigured: true`.
+- `GET /api/auth/status` має повертати кількість користувачів.
+- Після входу дашборд завантажує аркуші Google Sheets.
+- Тестова відповідь Google Form має з'явитися у відповідному модулі після оновлення.
 
-Для автоматичного розгортання потрібен GitHub Actions secret `CLOUDFLARE_API_TOKEN` із правами на Workers deployment та відповідний account. Це єдиний deployment secret у цьому процесі; Google credentials на сервері відсутні.
-
-Збірка виконується командою `npm run build`, розгортання — `npx wrangler deploy`. Міграції D1 не запускаються.
