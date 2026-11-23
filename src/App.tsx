@@ -85,21 +85,10 @@ export default function App(){
   const districts=useMemo(()=>DISTRICT_SHAPES.map(shape=>{const names=COMMUNITY_SHAPES.filter(c=>c.district===shape.name).map(c=>mapArea(c.name));const matched=filteredAst.filter(row=>names.includes(mapArea(row.Territorial_Hromada)));return{name:shape.name,total:matched.length,samples:new Set(matched.map(row=>row.Sample_ID)).size,resistant:matched.filter(row=>row.SIR_Category.toUpperCase()==='R').length};}),[filteredAst]);
 
   const ensureWorkbook=async()=>{
-    await createMissingSheetTabs([...GOOGLE_SHEET_TABS]);
     const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
-    const missing:string[]=[];
-    for(const name of GOOGLE_SHEET_TABS){
-      let table=await readSheetTable(name);
-      if(!table.headers.length){
-        const headers=DEFAULT_HEADERS[name];
-        await appendSheetRows(name,headers,[headers]);
-        table={headers,rows:[]};
-        missing.push(name);
-      }
-      loaded[name]=table;
-    }
+    for(const name of GOOGLE_SHEET_TABS) loaded[name]=await readSheetTable(name);
     setSheets(loaded);
-    return missing;
+    return [];
   };
 
   const signIn=async()=>{
