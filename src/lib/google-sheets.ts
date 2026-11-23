@@ -181,7 +181,7 @@ export const getGoogleProfile = async (): Promise<GoogleProfile> => {
 const quoteSheet = (sheet: string): string => `'${sheet.replace(/'/g, "''")}'`;
 
 export const readSheetTable = async (sheet: GoogleSheetTab): Promise<{ headers: string[]; rows: SheetRecord[] }> => {
-  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(requireSpreadsheetId())}/gviz/tq?sheet=${encodeURIComponent(sheet)}&tqx=out:json`;
+  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(requireSpreadsheetId())}/gviz/tq?sheet=${encodeURIComponent(sheet)}&headers=1&tqx=out:json`;
   const response = await fetch(url, { headers: { Accept: 'text/plain' }, cache: 'no-store' });
   if (!response.ok) throw new Error(`Не вдалося прочитати аркуш ${sheet} (HTTP ${response.status}). Перевірте, чи книга доступна для перегляду за посиланням.`);
   const raw = await response.text();
@@ -197,6 +197,8 @@ export const readSheetTable = async (sheet: GoogleSheetTab): Promise<{ headers: 
   if (new Set(headers.map(header => header.toLocaleLowerCase())).size !== headers.length) {
     throw new Error(`Аркуш ${sheet}: знайдено дублікати назв колонок.`);
   }
+  const normalizeHeaderCell = (value: string): string =>
+    value.toLocaleLowerCase('uk').replace(/[’'"_\\s-]/g, '').replace(/[^a-zа-яіїєґ0-9]/gi, '');
   const rows = (table?.rows || []).map(row => {
     const record: SheetRecord = {};
     headers.forEach((header, index) => {
@@ -204,7 +206,13 @@ export const readSheetTable = async (sheet: GoogleSheetTab): Promise<{ headers: 
       record[header] = String(cell?.f ?? cell?.v ?? '').trim();
     });
     return record;
-  }).filter(record => Object.values(record).some(value => value !== ''));
+  }).filter(record => {
+    const values = headers.map(header => record[header] ?? '');
+    const isRepeatedHeaderRow = values.length > 0 && values.every((value, index) =>
+      value !== '' && normalizeHeaderCell(value) === normalizeHeaderCell(headers[index]),
+    );
+    return !isRepeatedHeaderRow && values.some(value => value !== '');
+  });
   return { headers, rows };
 };
 
