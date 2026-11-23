@@ -7,7 +7,7 @@ import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import {
   appendSheetRows, clearGoogleSession, createMissingSheetTabs, getGoogleProfile,
-  googleClientConfigured, getMissingGoogleConfiguration, GOOGLE_SHEET_TABS, readSheetTable, setSelectedSpreadsheet, signInWithGoogle,
+  googleClientConfigured, getMissingGoogleConfiguration, GOOGLE_SHEET_TABS, getSelectedSpreadsheet, readSheetTable, setSelectedSpreadsheet, signInWithGoogle,
   type GoogleProfile, type GoogleSheetTab, type SheetRecord,
 } from './lib/google-sheets';
 
@@ -112,6 +112,11 @@ export default function App(){
   };
 
   const refreshAll=async()=>{
+    if(!getSelectedSpreadsheet().id){
+      const workbookInput=window.prompt('Вставте посилання на публічну Google-таблицю IPC & AMR:');
+      if(!workbookInput?.trim()) return;
+      try{setSelectedSpreadsheet(workbookInput);}catch(error){setNotice(error instanceof Error?error.message:String(error));return;}
+    }
     setLoading(true);
     try{
       const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
