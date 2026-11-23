@@ -26,7 +26,7 @@ export const setSelectedSpreadsheet = (input: string): string => {
   if (!value) throw new Error('Вкажіть посилання на публічну Google-книгу або її ID.');
 
   let id = value;
-  if (/^https?:\\/\\//i.test(value)) {
+  if (value.startsWith('https://') || value.startsWith('http://')) {
     let url: URL;
     try {
       url = new URL(value);
