@@ -14,48 +14,12 @@ export const GOOGLE_SHEET_TABS = [
 
 export type GoogleSheetTab = typeof GOOGLE_SHEET_TABS[number];
 
-let selectedSpreadsheetId =
-  typeof localStorage !== 'undefined'
-    ? localStorage.getItem('ipc-amr-spreadsheet-id') || ''
-    : '';
+// Central workbook configured once for every dashboard user and device.
+const selectedSpreadsheetId = '1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc';
 
 export const getSelectedSpreadsheet = () => ({ id: selectedSpreadsheetId });
 
-export const setSelectedSpreadsheet = (input: string): string => {
-  const value = input.trim();
-  if (!value) throw new Error('Вкажіть посилання на публічну Google-книгу або її ID.');
-
-  let id = value;
-  if (value.startsWith('https://') || value.startsWith('http://')) {
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      throw new Error('Посилання на Google Sheets має некоректний формат.');
-    }
-    if (url.hostname !== 'docs.google.com' || !url.pathname.startsWith('/spreadsheets/d/')) {
-      throw new Error('Потрібне посилання формату https://docs.google.com/spreadsheets/d/…');
-    }
-    id = url.pathname.split('/')[3] || '';
-  }
-
-  if (!/^[a-zA-Z0-9_-]{20,}$/.test(id)) {
-    throw new Error('Не вдалося визначити ID таблиці. Перевірте посилання Google Sheets.');
-  }
-
-  selectedSpreadsheetId = id;
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('ipc-amr-spreadsheet-id', id);
-  }
-  return id;
-};
-
-const requireSpreadsheetId = (): string => {
-  if (!selectedSpreadsheetId) {
-    throw new Error('Спочатку вкажіть посилання на публічну робочу Google-книгу.');
-  }
-  return selectedSpreadsheetId;
-};
+const requireSpreadsheetId = (): string => selectedSpreadsheetId;
 
 const normalizeHeader = (value: string): string =>
   value.toLocaleLowerCase('uk')
