@@ -158,11 +158,9 @@ export default function App(){
     {id:'wgs',label:'Геномний нагляд WGS',icon:Dna,group:'ЛАБОРАТОРНИЙ НАГЛЯД'},
     {id:'recommendations',label:'Рекомендації',icon:BadgeCheck,group:'ІНСТРУМЕНТИ'},
     {id:'legal',label:'Моніторинг НПА',icon:FileSpreadsheet,group:'НОРМАТИВНО-ПРАВОВА БАЗА'},
-    {id:'imports',label:'Імпорт даних',icon:ArrowUpFromLine,group:'ІНСТРУМЕНТИ'},
+    {id:'imports',label:'Внесення даних',icon:FileSpreadsheet,group:'ІНСТРУМЕНТИ'},
   ];
   const activeHeaders=activeSheet?sheets[activeSheet]?.headers||[]:[];
-  const canWrite=Boolean(googleProfile);
-  const addForm=(sheet:GoogleSheetTab)=>{setDraft(Object.fromEntries((sheets[sheet]?.headers||[]).map(h=>[h,''])));setShowForm(true);};
   const activeRecords=activeSheet?sheets[activeSheet]?.rows||[]:[];
   const selectedFacilities=activeSheet==='Facilities'?visibleFacilities:[];
 
