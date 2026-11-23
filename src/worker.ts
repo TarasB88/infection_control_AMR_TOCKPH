@@ -155,6 +155,7 @@ async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
     const body = await readBody(request);
     const submittedKey = String(body.bootstrapKey || '');
     if (!env.BOOTSTRAP_KEY || !constantTimeEqual(submittedKey, env.BOOTSTRAP_KEY)) return json({ error: 'Неправильний ключ початкового налаштування.' }, 403);
+    if (!env.SESSION_SIGNING_SECRET || env.SESSION_SIGNING_SECRET.length < 32) return json({ error: 'SESSION_SIGNING_SECRET не налаштовано у Worker.' }, 500);
     const status = await bridgeCall(env, 'authStatus');
     if (Number(status.userCount || 0) !== 0) return json({ error: 'Початковий адміністратор уже створений. Увійдіть зі своїм обліковим записом.' }, 409);
     const username = String(body.username || '').trim();
