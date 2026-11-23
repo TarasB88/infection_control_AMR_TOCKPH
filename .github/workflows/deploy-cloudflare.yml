@@ -9,12 +9,7 @@ on:
 permissions:
   contents: read
 
-env:
-  # OAuth client IDs are public browser configuration, not secrets.
-  VITE_GOOGLE_CLIENT_ID: "923298315983-8cf3md0efidr5l5f1dlllig5i2814ocm.apps.googleusercontent.com"
-
 concurrency:
-  # Keep production deploys isolated from feature-branch and pull-request CI runs.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
@@ -30,13 +25,6 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
-      - name: Validate OAuth configuration for production deploy
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          if [[ -z "$VITE_GOOGLE_CLIENT_ID" ]]; then
-            echo "::error title=Missing GitHub Actions variable::GOOGLE_OAUTH_CLIENT_ID is required for private Google Sheets OAuth."
-            exit 1
-          fi
       - name: Build frontend and type-check
         run: npm run build
 
@@ -55,7 +43,7 @@ jobs:
         run: npm install
       - name: Build frontend
         run: npm run build
-      - name: Deploy static app to Cloudflare Worker
+      - name: Deploy Worker and static frontend
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
