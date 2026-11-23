@@ -5,7 +5,6 @@ interface WorkerEnv {
   SESSION_SIGNING_SECRET?: string;
   BOOTSTRAP_KEY?: string;
 }
-
 type AppUser = {
   username: string;
   email: string;
@@ -13,7 +12,6 @@ type AppUser = {
   role: 'admin' | 'operator' | 'analyst';
   facilityCodes: string;
 };
-
 const SHEET_NAMES = new Set([
   'Facilities','Facility_IPC_Profile','IPC_Visits','IPC_Assessments','Recommendations',
   'Legal_Acts','Training_Events','Training_Facility_Stats','AST_Data','WGS_Staging','Dictionaries'
@@ -21,28 +19,24 @@ const SHEET_NAMES = new Set([
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 const PBKDF2_ITERATIONS = 210000;
 const encoder = new TextEncoder();
-
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
-
 function decodeBase64Url(value: string): Uint8Array {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
   const raw = atob(padded);
   return Uint8Array.from(raw, char => char.charCodeAt(0));
 }
-
 function encodeBase64Url(value: Uint8Array | string): string {
   const bytes = typeof value === 'string' ? encoder.encode(value) : value;
   let binary = '';
   bytes.forEach(byte => binary += String.fromCharCode(byte));
-  return btoa(binary).replace(/=/g, '').replace(/\\+/g, '-').replace(/\\//g, '_');
+  return btoa(binary).replace(/=/g, '').replaceAll('+', '-').replaceAll('/', '_');
 }
-
 function constantTimeEqual(a: string, b: string): boolean {
   const left = encoder.encode(a);
   const right = encoder.encode(b);
@@ -51,12 +45,10 @@ function constantTimeEqual(a: string, b: string): boolean {
   for (let i = 0; i < left.length; i++) mismatch |= left[i] ^ right[i];
   return mismatch === 0;
 }
-
 async function hmac(secret: string, value: string): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(value)));
 }
-
 async function issueSession(user: AppUser, secret: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const header = encodeBase64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
@@ -64,14 +56,12 @@ async function issueSession(user: AppUser, secret: string): Promise<string> {
   const body = header + '.' + payload;
   return body + '.' + encodeBase64Url(await hmac(secret, body));
 }
-
 async function verifySession(request: Request, env: WorkerEnv): Promise<AppUser | null> {
   const secret = env.SESSION_SIGNING_SECRET || '';
   if (secret.length < 32) return null;
   const header = request.headers.get('authorization') || '';
-  const match = header.match(/^Bearer\\s+(.+)$/i);
-  if (!match) return null;
-  const parts = match[1].split('.');
+  if (!header.toLowerCase().startsWith('bearer ')) return null;
+  const parts = header.slice(7).trim().split('.');
   if (parts.length !== 3) return null;
   try {
     const signed = parts[0] + '.' + parts[1];
@@ -94,7 +84,6 @@ async function verifySession(request: Request, env: WorkerEnv): Promise<AppUser 
     return null;
   }
 }
-
 async function derivePassword(password: string, saltHex: string): Promise<string> {
   const salt = Uint8Array.from(saltHex.match(/.{1,2}/g) || [], pair => parseInt(pair, 16));
   const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
@@ -105,12 +94,10 @@ async function derivePassword(password: string, saltHex: string): Promise<string
   );
   return Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('');
 }
-
 function randomHex(length: number): string {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 }
-
 async function readBody(request: Request): Promise<Record<string, unknown>> {
   const length = Number(request.headers.get('content-length') || 0);
   if (length > 5_000_000) throw new Error('Request body is too large.');
@@ -118,7 +105,6 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid JSON request.');
   return body as Record<string, unknown>;
 }
-
 async function bridgeCall(env: WorkerEnv, action: string, payload: Record<string, unknown> = {}): Promise<any> {
   if (!env.SHEETS_SCRIPT_URL || !env.SHEETS_BRIDGE_SECRET) {
     throw new Error('Google Sheets bridge is not configured. Deploy the Apps Script bridge and set Worker secrets.');
@@ -133,17 +119,14 @@ async function bridgeCall(env: WorkerEnv, action: string, payload: Record<string
   if (!result.ok) throw new Error(result.error || 'Google Sheets bridge request failed.');
   return result.data;
 }
-
 async function requireUser(request: Request, env: WorkerEnv): Promise<AppUser> {
   const user = await verifySession(request, env);
   if (!user) throw new Error('UNAUTHORIZED');
   return user;
 }
-
 function requireRole(user: AppUser, roles: AppUser['role'][]): void {
   if (!roles.includes(user.role)) throw new Error('FORBIDDEN');
 }
-
 function normalizeUser(row: Record<string, string>): AppUser {
   return {
     username: String(row.Username || ''),
@@ -153,11 +136,9 @@ function normalizeUser(row: Record<string, string>): AppUser {
     facilityCodes: String(row.Facility_Codes || '')
   };
 }
-
 async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
-
   if (path === '/api/health' && request.method === 'GET') {
     return json({
       ok: true,
@@ -166,12 +147,10 @@ async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
       bootstrapConfigured: Boolean(env.BOOTSTRAP_KEY)
     });
   }
-
   if (path === '/api/auth/status' && request.method === 'GET') {
     const status = await bridgeCall(env, 'authStatus');
     return json({ userCount: Number(status.userCount || 0), bootstrapConfigured: Boolean(env.BOOTSTRAP_KEY) });
   }
-
   if (path === '/api/auth/bootstrap' && request.method === 'POST') {
     const body = await readBody(request);
     const submittedKey = String(body.bootstrapKey || '');
@@ -195,7 +174,6 @@ async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
     if (!env.SESSION_SIGNING_SECRET || env.SESSION_SIGNING_SECRET.length < 32) return json({ error: 'SESSION_SIGNING_SECRET не налаштовано у Worker.' }, 500);
     return json({ token: await issueSession(user, env.SESSION_SIGNING_SECRET), user });
   }
-
   if (path === '/api/auth/login' && request.method === 'POST') {
     const body = await readBody(request);
     const username = String(body.username || '').trim();
@@ -212,13 +190,11 @@ async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
     const user = normalizeUser(row);
     return json({ token: await issueSession(user, env.SESSION_SIGNING_SECRET), user });
   }
-
   if (path === '/api/admin/users' && request.method === 'GET') {
     const user = await requireUser(request, env);
     requireRole(user, ['admin']);
     return json({ users: await bridgeCall(env, 'listUsers') });
   }
-
   if (path === '/api/admin/users' && request.method === 'POST') {
     const admin = await requireUser(request, env);
     requireRole(admin, ['admin']);
@@ -241,7 +217,6 @@ async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
     }});
     return json({ created: true });
   }
-
   if (path === '/api/admin/users' && request.method === 'PATCH') {
     const admin = await requireUser(request, env);
     requireRole(admin, ['admin']);
@@ -257,7 +232,6 @@ async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
     await bridgeCall(env, 'updateUser', { user: patch });
     return json({ updated: true });
   }
-
   if (path === '/api/sheets/ensure' && request.method === 'POST') {
     const user = await requireUser(request, env);
     requireRole(user, ['admin']);
@@ -266,11 +240,11 @@ async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
     await bridgeCall(env, 'ensureSheets', { names });
     return json({ ensured: names.length });
   }
-
-  const sheetMatch = path.match(/^\\/api\\/sheets\\/([^/]+)$/);
-  if (sheetMatch && SHEET_NAMES.has(decodeURIComponent(sheetMatch[1]))) {
+  const sheetPathPrefix = '/api/sheets/';
+  const sheetName = path.startsWith(sheetPathPrefix) ? decodeURIComponent(path.slice(sheetPathPrefix.length)) : '';
+  if (sheetName && SHEET_NAMES.has(sheetName)) {
     const user = await requireUser(request, env);
-    const sheet = decodeURIComponent(sheetMatch[1]);
+    const sheet = sheetName;
     if (request.method === 'GET') {
       const data = await bridgeCall(env, 'readSheet', { sheet });
       return json(data);
@@ -285,7 +259,6 @@ async function handleApi(request: Request, env: WorkerEnv): Promise<Response> {
   }
   return json({ error: 'API endpoint not found.' }, 404);
 }
-
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const url = new URL(request.url);
