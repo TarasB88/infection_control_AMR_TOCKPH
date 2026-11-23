@@ -5,7 +5,7 @@ import { AmrMap } from './components/AmrMap';
 import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import {
-  GOOGLE_SHEET_TABS, getSelectedSpreadsheet, readSheetTable, setSelectedSpreadsheet,
+  GOOGLE_SHEET_TABS, getSelectedSpreadsheet, readSheetTable,
   type GoogleSheetTab, type SheetRecord,
 } from './lib/google-sheets';
 
@@ -111,11 +111,6 @@ export default function App(){
 
   const refreshAll=async()=>{
     if(refreshInFlight.current)return;
-    if(!getSelectedSpreadsheet().id){
-      const workbookInput=window.prompt('Вставте посилання на публічну Google-таблицю IPC & AMR:');
-      if(!workbookInput?.trim()) return;
-      try{setSelectedSpreadsheet(workbookInput);}catch(error){setNotice(error instanceof Error?error.message:String(error));return;}
-    }
     refreshInFlight.current=true;
     setLoading(true);
     try{
@@ -132,11 +127,7 @@ export default function App(){
   };
 
   useEffect(()=>{
-    if(getSelectedSpreadsheet().id){
-      void refreshAll();
-    }else{
-      setNotice('Щоб завантажити дані, один раз вкажіть посилання на публічну Google-таблицю кнопкою «Оновити дані». Надалі дані завантажуватимуться автоматично під час відкриття дашборду.');
-    }
+    void refreshAll();
   },[]);
 
   useEffect(()=>{
