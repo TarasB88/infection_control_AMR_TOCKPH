@@ -59,7 +59,7 @@ const requireSpreadsheetId = (): string => {
 
 const normalizeHeader = (value: string): string =>
   value.toLocaleLowerCase('uk')
-    .replace(/[’'"_\\s-]/g, '')
+    .replace(/[’'"_\s-]/g, '')
     .replace(/[^a-zа-яіїєґ0-9]/gi, '');
 
 export const readSheetTable = async (
