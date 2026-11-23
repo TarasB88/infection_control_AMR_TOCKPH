@@ -71,7 +71,6 @@ export const setSelectedSpreadsheet = (input: string): { id: string; name: strin
   return { id, name: selectedSpreadsheetName };
 };
 export const GOOGLE_SHEET_TABS = [
-  'README',
   'Facilities',
   'Facility_IPC_Profile',
   'IPC_Assessments',
