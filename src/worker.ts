@@ -120,9 +120,15 @@ async function bridgeCall(env: WorkerEnv, action: string, payload: Record<string
   return result.data;
 }
 async function requireUser(request: Request, env: WorkerEnv): Promise<AppUser> {
-  const user = await verifySession(request, env);
-  if (!user) throw new Error('UNAUTHORIZED');
-  return user;
+  const tokenUser = await verifySession(request, env);
+  if (!tokenUser) throw new Error('UNAUTHORIZED');
+  // Resolve current account status and role from the only persistent store on every request.
+  // This makes deactivation and role changes effective without waiting for a session to expire.
+  const stored = await bridgeCall(env, 'findUser', { username: tokenUser.username });
+  if (!stored || !String(stored.Is_Active || '').toUpperCase().match(/^(TRUE|1|YES)$/)) {
+    throw new Error('UNAUTHORIZED');
+  }
+  return normalizeUser(stored);
 }
 function requireRole(user: AppUser, roles: AppUser['role'][]): void {
   if (!roles.includes(user.role)) throw new Error('FORBIDDEN');
