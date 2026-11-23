@@ -1,50 +1,44 @@
 # IPC & AMR Monitoring — Ternopil CDC
 
-Внутрішній україномовний вебзастосунок для моніторингу інфекційного контролю (IPC) та антимікробної резистентності (AMR) у закладах охорони здоров'я.
+Внутрішній україномовний вебзастосунок для моніторингу інфекційного контролю, антимікробної резистентності та геномного нагляду Тернопільського ОЦКПХ.
 
-## Єдине джерело даних
+## Архітектура
 
-- Усі робочі дані зберігаються в одній приватній книзі Google Sheets.
-- Cloudflare D1 повністю вилучено: немає binding, міграцій, SQL-запитів або D1 API.
-- Cloudflare Worker лише роздає статичний frontend.
-- Користувач входить через Google Identity Services (OAuth).
-- Браузер напряму читає та записує Google Sheets API; service account, Google client secret, private key і Apps Script не використовуються.
-- Єдиний параметр збірки Google — OAuth Client ID (`VITE_GOOGLE_CLIENT_ID`).
-- Після входу користувач вставляє URL або ID приватної Google-книги. Застосунок працює через Google Sheets API зі scope `spreadsheets`; Google-акаунт має бути доданий до книги у Drive.
+- **Google Sheets — єдине сховище та база даних.** Усі робочі таблиці та аркуш `Users` містяться в одній книзі.
+- **Google Forms — канал внесення даних закладами.** Відповіді надходять до окремих вкладок цієї ж книги.
+- **Apps Script — приватний міст** між Google Sheets та Cloudflare Worker.
+- **Cloudflare Worker — API та роздавання інтерфейсу.** Дані не записуються в Cloudflare D1 або іншу базу.
+- **Авторизація дашборду — власні логін і пароль.** Google OAuth у браузері не використовується.
 
-## Робочі аркуші
+## Налаштування
 
-`Facilities`, `Facility_IPC_Profile`, `IPC_Visits`, `IPC_Assessments`, `Recommendations`, `Training_Events`, `Training_Facility_Stats`, `AST_Data`, `WGS_Staging`, `Legal_Acts` та `Dictionaries`.
+1. Відкрийте цільову Google-книгу, перейдіть до **Extensions → Apps Script** і додайте код з [Apps Script bridge](integrations/google-apps-script/Code.gs).
+2. Запустіть `setupBridge()`, підтвердьте доступ до таблиці та скопіюйте згенерований секрет.
+3. Розгорніть скрипт як **Web app**, Execute as: **Me**, Who has access: **Anyone**. Скопіюйте URL із завершенням `/exec`.
+4. У Cloudflare Worker додайте secrets: `SHEETS_SCRIPT_URL`, `SHEETS_BRIDGE_SECRET`, `SESSION_SIGNING_SECRET` і `BOOTSTRAP_KEY`. Детально — у [інструкції з налаштування](docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md).
+5. Відкрийте дашборд. Під час першого запуску створіть адміністратора. Адміністратор додає інших користувачів у розділі **Користувачі**.
 
-Відсутні аркуші створюються автоматично, а початкові заголовки додаються лише до порожніх вкладок. Уже наявні заголовки не перезаписуються.
+## Google Forms
 
-## Налаштування Google OAuth
+Створіть форми та прив'яжіть відповіді до тієї самої Google-книги. Вкладки відповідей перейменуйте:
+- `Form_IPC_Visits`
+- `Form_IPC_Assessments`
+- `Form_Training_Events`
+- `Form_AST_Data`
+- `Form_WGS_Staging`
 
-1. У Google Cloud Console створіть проєкт та увімкніть Google Sheets API.
-2. Налаштуйте OAuth consent screen.
-3. Створіть OAuth Client ID типу Web application.
-4. Додайте production origin у Authorized JavaScript origins.
-5. У GitHub → Settings → Secrets and variables → Actions → Variables створіть змінну `GOOGLE_OAUTH_CLIENT_ID` з цим Client ID.
-6. Надайте працівникам потрібні права на приватну робочу книгу Google Sheets у Google Drive. Користувач вставляє URL або ID книги під час підключення.
-
-Додаткові параметри наведені в [Google Sheets setup](docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md).
-
-## Важливе обмеження безпеки
-
-Google Sheets permissions діють на всю книгу. Кожен користувач, якому надано доступ до книги та який авторизувався, технічно може прочитати/змінити її вкладки через Google API.
-
-Не зберігайте прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте заздалегідь погоджені псевдоніми. Не надавайте доступ до книги тим, кому не можна бачити всі її дані.
-
-## Розгортання
-
-GitHub Actions запускає TypeScript/Vite build та розгортання Worker. Для Cloudflare deploy все ще потрібен Cloudflare API token як GitHub Actions secret `CLOUDFLARE_API_TOKEN`. Це токен Cloudflare deployment, не Google secret.
+Назви запитань у формах мають відповідати заголовкам колонок відповідного аркуша. Bridge об'єднує відповіді форм із даними основних аркушів під час читання.
 
 ## Локальна розробка
 
 ```bash
 npm install
-# створіть .env.local на основі .env.example
 npm run dev
 npm run build
 ```
 
+Для локального API потрібні Worker bindings/secrets у Wrangler dev environment; інструкція — у документації налаштування.
+
+## Важливо
+
+Не зберігайте ПІБ пацієнтів, номери медичних карт, телефони, адреси або інші прямі ідентифікатори. Для `Patient_ID` використовуйте погоджений псевдонім. Ролі `admin`, `operator`, `analyst` перевіряються на сервері; прив'язка доступу до окремих закладів за `Facility_Codes` у поточній версії ще не застосовується як рядкове обмеження.
