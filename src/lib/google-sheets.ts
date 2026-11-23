@@ -1,74 +1,29 @@
-export type GoogleProfile = {
-  sub: string;
+export type AppUser = {
+  username: string;
   email: string;
-  email_verified?: boolean;
-  name?: string;
-  picture?: string;
+  name: string;
+  role: 'admin' | 'operator' | 'analyst';
+  facilityCodes: string;
+};
+
+export type ManagedUser = {
+  Username: string;
+  Email: string;
+  Full_Name: string;
+  Role: 'admin' | 'operator' | 'analyst';
+  Is_Active: string;
+  Facility_Codes: string;
+  Created_At: string;
+  Updated_At: string;
+};
+
+export type AuthStatus = {
+  userCount: number;
+  bootstrapConfigured: boolean;
 };
 
 export type SheetRecord = Record<string, string>;
 
-type GoogleTokenResponse = {
-  access_token?: string;
-  expires_in?: number;
-  error?: string;
-  error_description?: string;
-};
-
-type GoogleSheetsResponse = {
-  values?: unknown[][];
-};
-
-type GoogleGIS = {
-  accounts: {
-    oauth2: {
-      initTokenClient(options: {
-        client_id: string;
-        scope: string;
-        callback: (response: GoogleTokenResponse) => void;
-        error_callback?: (error: { type?: string; message?: string }) => void;
-      }): { requestAccessToken(options?: { prompt?: string }): void };
-    };
-  };
-};
-
-declare global {
-  interface Window {
-    google?: GoogleGIS;
-  }
-}
-
-const configuredClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
-let selectedSpreadsheetId = '';
-let selectedSpreadsheetName = '';
-const scopes = 'openid email profile https://www.googleapis.com/auth/spreadsheets';
-let accessToken = '';
-let expiresAt = 0;
-
-export const getSelectedSpreadsheet = () => ({ id: selectedSpreadsheetId, name: selectedSpreadsheetName });
-const requireSpreadsheetId = (): string => {
-  if (!selectedSpreadsheetId) throw new Error('Спочатку вкажіть URL або ID робочої Google-книги.');
-  return selectedSpreadsheetId;
-};
-
-/** Accepts either a Google Sheets URL or a spreadsheet ID pasted by the user. */
-export const setSelectedSpreadsheet = (input: string): { id: string; name: string } => {
-  const value = input.trim();
-  if (!value) throw new Error('Вкажіть URL або ID робочої Google-книги.');
-  let id = value;
-  if (/^https?:\/\//i.test(value)) {
-    let url: URL;
-    try { url = new URL(value); } catch { throw new Error('Посилання на Google Sheets має некоректний формат.'); }
-    if (url.hostname !== 'docs.google.com' || !url.pathname.startsWith('/spreadsheets/d/')) {
-      throw new Error('Потрібне посилання формату https://docs.google.com/spreadsheets/d/…');
-    }
-    id = url.pathname.split('/')[3] || '';
-  }
-  if (!/^[a-zA-Z0-9_-]{20,}$/.test(id)) throw new Error('Не вдалося визначити ID таблиці. Вставте повне посилання Google Sheets або коректний ID.');
-  selectedSpreadsheetId = id;
-  selectedSpreadsheetName = 'Google Sheets · ' + id.slice(0, 8) + '…';
-  return { id, name: selectedSpreadsheetName };
-};
 export const GOOGLE_SHEET_TABS = [
   'Facilities',
   'Facility_IPC_Profile',
@@ -82,213 +37,97 @@ export const GOOGLE_SHEET_TABS = [
   'WGS_Staging',
   'Dictionaries',
 ] as const;
+
 export type GoogleSheetTab = typeof GOOGLE_SHEET_TABS[number];
 
-export const getMissingGoogleConfiguration = (): string[] => {
-  const missing: string[] = [];
-  if (!configuredClientId) missing.push('VITE_GOOGLE_CLIENT_ID');
-  return missing;
+let sessionToken = '';
+
+const apiRequest = async <T>(path: string, init: RequestInit = {}, authenticated = true): Promise<T> => {
+  const headers = new Headers(init.headers || {});
+  headers.set('Accept', 'application/json');
+  if (init.body !== undefined) headers.set('Content-Type', 'application/json');
+  if (authenticated && sessionToken) headers.set('Authorization', 'Bearer ' + sessionToken);
+
+  const response = await fetch(path, { ...init, headers, cache: 'no-store' });
+  const result = await response.json().catch(() => ({})) as { error?: string } & T;
+  if (!response.ok) throw new Error(result.error || 'Помилка API: HTTP ' + response.status);
+  return result;
 };
-export const googleClientConfigured = (): boolean => getMissingGoogleConfiguration().length === 0;
+
+export const getAuthStatus = (): Promise<AuthStatus> =>
+  apiRequest<AuthStatus>('/api/auth/status', { method: 'GET' }, false);
+
+export const loginWithPassword = async (username: string, password: string): Promise<AppUser> => {
+  const result = await apiRequest<{ token: string; user: AppUser }>(
+    '/api/auth/login',
+    { method: 'POST', body: JSON.stringify({ username, password }) },
+    false
+  );
+  if (!result.token || !result.user) throw new Error('Сервер не повернув обліковий сеанс.');
+  sessionToken = result.token;
+  return result.user;
+};
+
+export const bootstrapAdmin = async (input: {
+  bootstrapKey: string;
+  username: string;
+  password: string;
+  email: string;
+  name: string;
+}): Promise<AppUser> => {
+  const result = await apiRequest<{ token: string; user: AppUser }>(
+    '/api/auth/bootstrap',
+    { method: 'POST', body: JSON.stringify(input) },
+    false
+  );
+  if (!result.token || !result.user) throw new Error('Сервер не повернув сеанс адміністратора.');
+  sessionToken = result.token;
+  return result.user;
+};
 
 export const clearGoogleSession = (): void => {
-  accessToken = '';
-  expiresAt = 0;
-  selectedSpreadsheetId = '';
-  selectedSpreadsheetName = '';
-};
-
-export const getGoogleAccessToken = (): string => {
-  if (!accessToken || Date.now() >= expiresAt) {
-    clearGoogleSession();
-    throw new Error('Сеанс Google завершився. Увійдіть через Google повторно.');
-  }
-  return accessToken;
-};
-
-/**
- * Starts Google's browser-based OAuth token flow.
- * The OAuth client ID is public configuration, not a client secret.
- * Tokens are kept in memory only and are never written to localStorage or D1.
- */
-export const signInWithGoogle = (): Promise<string> => {
-  if (!configuredClientId) {
-    return Promise.reject(new Error('Не задано VITE_GOOGLE_CLIENT_ID. Додайте OAuth Client ID у GitHub Actions Variables.'));
-  }
-  if (!window.google?.accounts?.oauth2) {
-    return Promise.reject(new Error('Бібліотека Google Identity Services ще не завантажилася. Оновіть сторінку та повторіть вхід.'));
-  }
-
-  return new Promise((resolve, reject) => {
-    const client = window.google!.accounts.oauth2.initTokenClient({
-      client_id: configuredClientId,
-      scope: scopes,
-      callback: (response) => {
-        if (response.error || !response.access_token) {
-          reject(new Error(response.error_description || response.error || 'Google не надав доступ до таблиці.'));
-          return;
-        }
-        accessToken = response.access_token;
-        expiresAt = Date.now() + Math.max(60, Number(response.expires_in || 3600) - 60) * 1000;
-        resolve(accessToken);
-      },
-      error_callback: (error) => reject(new Error(error.message || 'Не вдалося відкрити вікно авторизації Google.')),
-    });
-    client.requestAccessToken({ prompt: 'select_account' });
-  });
-};
-
-const googleFetch = async (url: string, init: RequestInit = {}): Promise<Response> => {
-  const token = getGoogleAccessToken();
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
-      ...(init.headers || {}),
-    },
-  });
-  if (response.status === 401) {
-    clearGoogleSession();
-    throw new Error('Google завершив сеанс доступу. Увійдіть через Google повторно.');
-  }
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    let message = `Google API повернув HTTP ${response.status}.`;
-    try {
-      const parsed = JSON.parse(body) as { error?: { message?: string; status?: string } };
-      if (parsed.error?.message) message += ' ' + parsed.error.message;
-    } catch {
-      // Keep the stable HTTP error if Google returns a non-JSON response.
-    }
-    if (response.status === 403) {
-      message += ' Переконайтеся, що цей Google-акаунт має доступ до робочої таблиці, а Google Sheets API увімкнено.';
-    }
-    throw new Error(message);
-  }
-  return response;
-};
-
-export const getGoogleProfile = async (): Promise<GoogleProfile> => {
-  const response = await googleFetch('https://www.googleapis.com/oauth2/v3/userinfo');
-  const profile = await response.json() as GoogleProfile;
-  if (!profile.email || profile.email_verified === false) {
-    throw new Error('Google не повернув підтверджену адресу електронної пошти.');
-  }
-  return profile;
-};
-
-const quoteSheet = (sheet: string): string => `'${sheet.replace(/'/g, "''")}'`;
-
-export const readSheetTable = async (sheet: GoogleSheetTab): Promise<{ headers: string[]; rows: SheetRecord[] }> => {
-  const range = encodeURIComponent(`${quoteSheet(sheet)}!A:ZZ`);
-  const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}/values/${range}?valueRenderOption=FORMATTED_VALUE&majorDimension=ROWS`,
-  );
-  const data = await response.json() as GoogleSheetsResponse;
-  const values = Array.isArray(data.values) ? data.values : [];
-  const headers = (values[0] || []).map(value => String(value ?? '').trim());
-  if (!headers.length) return { headers: [], rows: [] };
-  if (headers.some(header => !header)) {
-    throw new Error(`Аркуш ${sheet}: заголовки містять порожні клітинки в першому рядку.`);
-  }
-  const normalized = headers.map(header => header.toLocaleLowerCase());
-  if (new Set(normalized).size !== normalized.length) {
-    throw new Error(`Аркуш ${sheet}: знайдено дублікати назв колонок.`);
-  }
-  const rows = values.slice(1).filter(row => row.some(value => String(value ?? '').trim() !== '')).map(row => {
-    const record: SheetRecord = {};
-    headers.forEach((header, index) => {
-      record[header] = String(row[index] ?? '').trim();
-    });
-    return record;
-  });
-  return { headers, rows };
-};
-
-export const appendSheetRows = async (
-  sheet: GoogleSheetTab,
-  headers: string[],
-  rows: Array<Array<string | number | boolean>>,
-): Promise<void> => {
-  if (!rows.length) return;
-  if (!headers.length) throw new Error(`Аркуш ${sheet}: немає заголовків для зіставлення колонок.`);
-  const range = encodeURIComponent(`${quoteSheet(sheet)}!A:${columnName(headers.length)}`);
-  const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ majorDimension: 'ROWS', values: rows }),
-    },
-  );
-  await response.json().catch(() => undefined);
-};
-
-export const updateSheetRow = async (
-  sheet: GoogleSheetTab,
-  rowNumber: number,
-  headers: string[],
-  row: Array<string | number | boolean>,
-): Promise<void> => {
-  if (rowNumber < 2) throw new Error('Не можна перезаписувати рядок заголовків.');
-  if (row.length !== headers.length) throw new Error('Кількість значень не відповідає кількості колонок.');
-  const range = encodeURIComponent(`${quoteSheet(sheet)}!A${rowNumber}:${columnName(headers.length)}${rowNumber}`);
-  const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}/values/${range}?valueInputOption=RAW`,
-    {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ majorDimension: 'ROWS', values: [row] }),
-    },
-  );
-  await response.json().catch(() => undefined);
-};
-
-export const getSpreadsheetMetadata = async (): Promise<Array<{ title: string; sheetId: number }>> => {
-  const fields = encodeURIComponent('sheets.properties(title,sheetId)');
-  const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}?fields=${fields}`,
-  );
-  const data = await response.json() as { sheets?: Array<{ properties?: { title?: string; sheetId?: number } }> };
-  return (data.sheets || []).map(sheet => ({
-    title: sheet.properties?.title || '',
-    sheetId: Number(sheet.properties?.sheetId ?? -1),
-  })).filter(sheet => sheet.title && sheet.sheetId >= 0);
+  sessionToken = '';
 };
 
 export const createMissingSheetTabs = async (names: string[]): Promise<void> => {
-  const existing = new Set((await getSpreadsheetMetadata()).map(sheet => sheet.title));
-  const missing = names.filter(name => !existing.has(name));
-  if (!missing.length) return;
-  await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}:batchUpdate`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requests: missing.map(title => ({ addSheet: { properties: { title } } })),
-      }),
-    },
-  );
+  await apiRequest('/api/sheets/ensure', { method: 'POST', body: JSON.stringify({ names }) });
 };
 
-export const getSpreadsheetTabs = async (): Promise<string[]> => {
-  const fields = encodeURIComponent('sheets.properties(title,sheetId)');
-  const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}?fields=${fields}`,
-  );
-  const data = await response.json() as { sheets?: Array<{ properties?: { title?: string } }> };
-  return (data.sheets || []).map(sheet => sheet.properties?.title || '').filter(Boolean);
+export const readSheetTable = async (sheet: GoogleSheetTab): Promise<{ headers: string[]; rows: SheetRecord[] }> =>
+  apiRequest<{ headers: string[]; rows: SheetRecord[] }>('/api/sheets/' + encodeURIComponent(sheet), { method: 'GET' });
+
+export const appendSheetRows = async (
+  sheet: GoogleSheetTab,
+  _headers: string[],
+  rows: Array<Array<string | number | boolean>>,
+): Promise<void> => {
+  if (!rows.length) return;
+  await apiRequest('/api/sheets/' + encodeURIComponent(sheet), {
+    method: 'POST',
+    body: JSON.stringify({ rows })
+  });
 };
 
-const columnName = (column: number): string => {
-  let value = column;
-  let result = '';
-  while (value > 0) {
-    const remainder = (value - 1) % 26;
-    result = String.fromCharCode(65 + remainder) + result;
-    value = Math.floor((value - 1) / 26);
-  }
-  return result;
+export const listUsers = async (): Promise<ManagedUser[]> => {
+  const result = await apiRequest<{ users: ManagedUser[] }>('/api/admin/users', { method: 'GET' });
+  return result.users || [];
+};
+
+export const createUser = async (input: {
+  username: string;
+  password: string;
+  email: string;
+  name: string;
+  role: ManagedUser['Role'];
+  facilityCodes: string;
+}): Promise<void> => {
+  await apiRequest('/api/admin/users', { method: 'POST', body: JSON.stringify(input) });
+};
+
+export const updateUser = async (input: {
+  username: string;
+  role?: ManagedUser['Role'];
+  isActive?: boolean;
+}): Promise<void> => {
+  await apiRequest('/api/admin/users', { method: 'PATCH', body: JSON.stringify(input) });
 };
