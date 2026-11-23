@@ -39,8 +39,8 @@ declare global {
 }
 
 const configuredClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
-let selectedSpreadsheetId = '';
-let selectedSpreadsheetName = '';
+let selectedSpreadsheetId = typeof localStorage !== 'undefined' ? (localStorage.getItem('ipc-amr-spreadsheet-id') || '') : '';
+let selectedSpreadsheetName = selectedSpreadsheetId ? 'Google Sheets · ' + selectedSpreadsheetId.slice(0, 8) + '…' : '';
 const scopes = 'openid email profile https://www.googleapis.com/auth/spreadsheets';
 let accessToken = '';
 let expiresAt = 0;
@@ -66,6 +66,7 @@ export const setSelectedSpreadsheet = (input: string): { id: string; name: strin
   }
   if (!/^[a-zA-Z0-9_-]{20,}$/.test(id)) throw new Error('Не вдалося визначити ID таблиці. Вставте повне посилання Google Sheets або коректний ID.');
   selectedSpreadsheetId = id;
+  if (typeof localStorage !== 'undefined') localStorage.setItem('ipc-amr-spreadsheet-id', id);
   selectedSpreadsheetName = 'Google Sheets · ' + id.slice(0, 8) + '…';
   return { id, name: selectedSpreadsheetName };
 };
@@ -94,6 +95,7 @@ export const clearGoogleSession = (): void => {
   accessToken = '';
   expiresAt = 0;
   selectedSpreadsheetId = '';
+  if (typeof localStorage !== 'undefined') localStorage.removeItem('ipc-amr-spreadsheet-id');
   selectedSpreadsheetName = '';
 };
 
