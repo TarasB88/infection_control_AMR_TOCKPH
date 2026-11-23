@@ -67,7 +67,8 @@ const COLUMN_LABELS:Record<string,string> = {
   FASTA_FASTQ_File_Link:'Посилання на FASTA/FASTQ',Dictionary:'Довідник',Code:'Код',
   Label:'Назва значення',Parent_Code:'Батьківський код',Is_Active:'Активний',Notes:'Примітки',
 };
-const columnLabel=(header:string)=>COLUMN_LABELS[header]||header.replace(/_/g,' ');
+const COLUMN_LABELS_NORMALIZED=Object.fromEntries(Object.entries(COLUMN_LABELS).map(([key,label])=>[norm(key),label])) as Record<string,string>;
+const columnLabel=(header:string)=>COLUMN_LABELS_NORMALIZED[norm(header)]||header.replace(/[_-]+/g,' ');
 const getCell=(record:SheetRecord,names:string[],fallback='')=>{
   for(const name of names){
     const key=norm(name);
