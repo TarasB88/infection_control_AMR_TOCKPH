@@ -19,7 +19,8 @@ type GoogleSheetsResponse = {
   values?: unknown[][];
 };
 
-type GoogleGIS = {  accounts: {
+type GoogleGIS = {
+  accounts: {
     oauth2: {
       initTokenClient(options: {
         client_id: string;
