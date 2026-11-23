@@ -1,7 +1,14 @@
-# Google authentication and Sheets integration
+# Google Apps Script bridge
 
-The current application uses Google Identity Services in the browser and reads/writes the master Google Sheets workbook directly through the Google Sheets API.
+Цей каталог містить Apps Script код, який надає Cloudflare Worker контрольований серверний доступ до приватної робочої книги Google Sheets.
 
-There is no Google Apps Script project, Web App, bridge token, service account, client secret or private key. This folder remains only to preserve repository history; no Apps Script source or deployment step is used.
+1. Відкрийте цільову книгу Google Sheets.
+2. Extensions → Apps Script.
+3. Замініть вміст `Code.gs` кодом із цього каталогу.
+4. Запустіть `setupBridge()` і скопіюйте згенерований bridge secret.
+5. Розгорніть як Web App: Execute as **Me**, access **Anyone**.
+6. URL `/exec` та секрет передайте в Cloudflare Worker secrets як `SHEETS_SCRIPT_URL` і `SHEETS_BRIDGE_SECRET`.
 
-See [Google Sheets only: setup](../../docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md) for OAuth Client ID configuration, workbook access, sheet schema, and security limitations.
+Браузер не звертається до Google API напряму і не запускає Google OAuth. Доступ до приватної книги має Apps Script, який виконується від імені власника. Секрет перевіряється для кожної операції; він не передається frontend.
+
+Google Forms можуть записувати відповіді у відповідні вкладки тієї самої книги. Назви вкладок форм задаються в `FORM_RESPONSE_TABS` на початку `Code.gs`.
