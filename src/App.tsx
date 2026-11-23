@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowDownToLine, BadgeCheck, Building2, CalendarDays, ClipboardCheck, Dna, FileSpreadsheet, FlaskConical, LayoutDashboard, Menu, Microscope, Search, ShieldCheck, Users, X, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AmrMap } from './components/AmrMap';
@@ -93,6 +93,7 @@ export default function App(){
   const [notice,setNotice]=useState('Завантаження даних із робочої Google-таблиці…');
   const [sheets,setSheets]=useState<Partial<Record<GoogleSheetTab,SheetState>>>({});
   const [loading,setLoading]=useState(false);
+  const refreshInFlight=useRef(false);
   const [query,setQuery]=useState('');
   const [facilityQuery,setFacilityQuery]=useState('');
   const [selectedDistrict,setSelectedDistrict]=useState('all');
@@ -109,11 +110,13 @@ export default function App(){
   const districts=useMemo(()=>DISTRICT_SHAPES.map(shape=>{const names=COMMUNITY_SHAPES.filter(c=>c.district===shape.name).map(c=>mapArea(c.name));const matched=filteredAst.filter(row=>names.includes(mapArea(row.Territorial_Hromada)));return{name:shape.name,total:matched.length,samples:new Set(matched.map(row=>row.Sample_ID)).size,resistant:matched.filter(row=>row.SIR_Category.toUpperCase()==='R').length};}),[filteredAst]);
 
   const refreshAll=async()=>{
+    if(refreshInFlight.current)return;
     if(!getSelectedSpreadsheet().id){
       const workbookInput=window.prompt('Вставте посилання на публічну Google-таблицю IPC & AMR:');
       if(!workbookInput?.trim()) return;
       try{setSelectedSpreadsheet(workbookInput);}catch(error){setNotice(error instanceof Error?error.message:String(error));return;}
     }
+    refreshInFlight.current=true;
     setLoading(true);
     try{
       const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
@@ -123,9 +126,9 @@ export default function App(){
       }
       setSheets(loaded);
       const total=Object.values(loaded).reduce((sum,table)=>sum+(table?.rows.length||0),0);
-      setNotice('Оновлено '+GOOGLE_SHEET_TABS.length+' аркушів Google Sheets · '+total+' рядків даних.');
+      setNotice('Оновлено '+GOOGLE_SHEET_TABS.length+' аркушів Google Sheets · '+total+' рядків даних · '+new Date().toLocaleTimeString('uk-UA')+'. Автооновлення кожні 5 хвилин.');
     }catch(error){setNotice('Не вдалося оновити Google Sheets: '+(error instanceof Error?error.message:String(error)));}
-    finally{setLoading(false);}
+    finally{refreshInFlight.current=false;setLoading(false);}
   };
 
   useEffect(()=>{
@@ -134,6 +137,22 @@ export default function App(){
     }else{
       setNotice('Щоб завантажити дані, один раз вкажіть посилання на публічну Google-таблицю кнопкою «Оновити дані». Надалі дані завантажуватимуться автоматично під час відкриття дашборду.');
     }
+  },[]);
+
+  useEffect(()=>{
+    const refreshWhenVisible=()=>{
+      if(document.visibilityState==='visible' && getSelectedSpreadsheet().id){
+        void refreshAll();
+      }
+    };
+    const timer=window.setInterval(refreshWhenVisible,5*60*1000);
+    window.addEventListener('focus',refreshWhenVisible);
+    document.addEventListener('visibilitychange',refreshWhenVisible);
+    return ()=>{
+      window.clearInterval(timer);
+      window.removeEventListener('focus',refreshWhenVisible);
+      document.removeEventListener('visibilitychange',refreshWhenVisible);
+    };
   },[]);
 
   const exportAst=()=>{
