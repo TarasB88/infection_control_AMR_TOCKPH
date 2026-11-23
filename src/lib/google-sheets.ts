@@ -39,7 +39,7 @@ declare global {
 }
 
 const configuredClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
-let selectedSpreadsheetId = '1xXq4cXqLM7Jvs0ewDsFgGn9lLl7UtCn26fhDVIEqWVc';
+let selectedSpreadsheetId = '';
 let selectedSpreadsheetName = '';
 const scopes = 'openid email profile https://www.googleapis.com/auth/spreadsheets';
 let accessToken = '';
