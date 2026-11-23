@@ -198,7 +198,7 @@ export const readSheetTable = async (sheet: GoogleSheetTab): Promise<{ headers: 
     throw new Error(`Аркуш ${sheet}: знайдено дублікати назв колонок.`);
   }
   const normalizeHeaderCell = (value: string): string =>
-    value.toLocaleLowerCase('uk').replace(/[’'"_\\s-]/g, '').replace(/[^a-zа-яіїєґ0-9]/gi, '');
+    value.toLocaleLowerCase('uk').replace(/[’'"_\s-]/g, '').replace(/[^a-zа-яіїєґ0-9]/gi, '');
   const rows = (table?.rows || []).map(row => {
     const record: SheetRecord = {};
     headers.forEach((header, index) => {
