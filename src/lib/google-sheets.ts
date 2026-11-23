@@ -33,7 +33,8 @@ type GoogleGIS = {  accounts: {
 
 declare global {
   interface Window {
-    google?: GoogleGIS;  }
+    google?: GoogleGIS;
+  }
 }
 
 const configuredClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
@@ -54,7 +55,7 @@ export const setSelectedSpreadsheet = (input: string): { id: string; name: strin
   const value = input.trim();
   if (!value) throw new Error('Вкажіть URL або ID робочої Google-книги.');
   let id = value;
-  if (/^https?:\\/\\//i.test(value)) {
+  if (/^https?:\/\//i.test(value)) {
     let url: URL;
     try { url = new URL(value); } catch { throw new Error('Посилання на Google Sheets має некоректний формат.'); }
     if (url.hostname !== 'docs.google.com' || !url.pathname.startsWith('/spreadsheets/d/')) {
