@@ -36,7 +36,7 @@ const SHEET_BY_TAB:Partial<Record<Tab,GoogleSheetTab>> = {
 const TAB_LABELS:Record<Tab,string> = {
   overview:'Огляд системи',facilities:'Реєстр закладів',visits:'Моніторингові візити',ipc:'Оцінювання IPC',
   training:'Навчальні заходи',amr:'Моніторинг AST',wgs:'Геномний нагляд WGS',recommendations:'Рекомендації',
-  imports:'Імпорт даних',legal:'Моніторинг НПА',
+  imports:'Імпорт даних',legal:'Моніторинг НПА',users:'Користувачі системи',
 };
 const REQUIRED_AST:(keyof AstRow)[] = AST_HEADERS.filter(field => !['Patient_ID','MIC_Operator','MIC_Value','Zone_Diameter'].includes(field)) as (keyof AstRow)[];
 const norm=(value:string)=>value.toLocaleLowerCase('uk').replace(/[’'"_\s-]/g,'').replace(/[^a-zа-яіїєґ0-9]/gi,'');
