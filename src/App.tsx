@@ -1,14 +1,12 @@
-import type { FormEvent } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, AlertCircle, ArrowDownToLine, ArrowUpFromLine, BadgeCheck, Building2, CalendarDays, ClipboardCheck, Dna, FileSpreadsheet, FlaskConical, LayoutDashboard, LogOut, Menu, Microscope, Plus, Search, ShieldCheck, Users, X, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Activity, AlertCircle, ArrowDownToLine, BadgeCheck, Building2, CalendarDays, ClipboardCheck, Dna, FileSpreadsheet, FlaskConical, LayoutDashboard, Menu, Microscope, Search, ShieldCheck, Users, X, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AmrMap } from './components/AmrMap';
 import { COMMUNITY_SHAPES } from './lib/community-shapes';
 import { DISTRICT_SHAPES } from './lib/map-shapes';
 import {
-  appendSheetRows, clearGoogleSession, createMissingSheetTabs, getGoogleProfile,
-  googleClientConfigured, getMissingGoogleConfiguration, GOOGLE_SHEET_TABS, getSelectedSpreadsheet, readSheetTable, setSelectedSpreadsheet, signInWithGoogle,
-  type GoogleProfile, type GoogleSheetTab, type SheetRecord,
+  GOOGLE_SHEET_TABS, getSelectedSpreadsheet, readSheetTable, setSelectedSpreadsheet,
+  type GoogleSheetTab, type SheetRecord,
 } from './lib/google-sheets';
 
 type Tab = 'overview'|'facilities'|'visits'|'ipc'|'training'|'amr'|'wgs'|'recommendations'|'imports'|'legal';
@@ -33,7 +31,7 @@ const SHEET_BY_TAB:Partial<Record<Tab,GoogleSheetTab>> = {
 const TAB_LABELS:Record<Tab,string> = {
   overview:'Огляд системи',facilities:'Реєстр закладів',visits:'Моніторингові візити',ipc:'Оцінювання IPC',
   training:'Навчальні заходи',amr:'Моніторинг AST',wgs:'Геномний нагляд WGS',recommendations:'Рекомендації',
-  imports:'Імпорт даних',legal:'Моніторинг НПА',
+  imports:'Внесення даних',legal:'Моніторинг НПА',
 };
 const REQUIRED_AST:(keyof AstRow)[] = AST_HEADERS.filter(field => !['Patient_ID','MIC_Operator','MIC_Value','Zone_Diameter'].includes(field)) as (keyof AstRow)[];
 const norm=(value:string)=>value.toLocaleLowerCase('uk').replace(/[’'"_\s-]/g,'').replace(/[^a-zа-яіїєґ0-9]/gi,'');
@@ -92,19 +90,13 @@ const mapArea=(value:string)=>value.toLocaleLowerCase('uk').replace(/(терит
 export default function App(){
   const [tab,setTab]=useState<Tab>('overview');
   const [mobile,setMobile]=useState(false);
-  const [googleProfile,setGoogleProfile]=useState<GoogleProfile|null>(null);
-  const [authLoading,setAuthLoading]=useState(false);
   const [notice,setNotice]=useState('Завантаження даних із робочої Google-таблиці…');
   const [sheets,setSheets]=useState<Partial<Record<GoogleSheetTab,SheetState>>>({});
   const [loading,setLoading]=useState(false);
   const [query,setQuery]=useState('');
   const [facilityQuery,setFacilityQuery]=useState('');
-  const [draft,setDraft]=useState<SheetRecord>({});
-  const [showForm,setShowForm]=useState(false);
-  const [saving,setSaving]=useState(false);
   const [selectedDistrict,setSelectedDistrict]=useState('all');
   const [selectedCommunity,setSelectedCommunity]=useState('all');
-  const fileRef=useRef<HTMLInputElement>(null);
   const title=TAB_LABELS[tab];
   const activeSheet=SHEET_BY_TAB[tab];
   const current=sheets[activeSheet||'AST_Data']||{headers:[],rows:[]};
@@ -115,33 +107,6 @@ export default function App(){
   const filteredAst=astRows.filter(row=>Object.values(row).join(' ').toLocaleLowerCase('uk').includes(query.toLocaleLowerCase('uk')));
   const communities=useMemo(()=>COMMUNITY_SHAPES.map(shape=>{const matched=filteredAst.filter(row=>mapArea(row.Territorial_Hromada)===mapArea(shape.name));return{name:shape.name,total:matched.length,samples:new Set(matched.map(row=>row.Sample_ID)).size,resistant:matched.filter(row=>row.SIR_Category.toUpperCase()==='R').length};}),[filteredAst]);
   const districts=useMemo(()=>DISTRICT_SHAPES.map(shape=>{const names=COMMUNITY_SHAPES.filter(c=>c.district===shape.name).map(c=>mapArea(c.name));const matched=filteredAst.filter(row=>names.includes(mapArea(row.Territorial_Hromada)));return{name:shape.name,total:matched.length,samples:new Set(matched.map(row=>row.Sample_ID)).size,resistant:matched.filter(row=>row.SIR_Category.toUpperCase()==='R').length};}),[filteredAst]);
-
-  const ensureWorkbook=async()=>{
-    const loaded:Partial<Record<GoogleSheetTab,SheetState>>={};
-    for(const name of GOOGLE_SHEET_TABS) loaded[name]=await readSheetTable(name);
-    setSheets(loaded);
-    return [];
-  };
-
-  const signIn=async()=>{
-    const workbookInput=window.prompt('Вставте повне посилання на робочу Google-таблицю або її ID:');
-    if(!workbookInput?.trim())return;
-    setAuthLoading(true);
-    try{
-      const selectedWorkbook=setSelectedSpreadsheet(workbookInput);
-      await signInWithGoogle();
-      const profile=await getGoogleProfile();
-      setGoogleProfile(profile);
-      await ensureWorkbook();
-      setNotice('Підключено Google Sheets · '+selectedWorkbook.name+' · '+profile.email+'. Доступ на читання та запис надано Google OAuth.');
-      setTab('overview');
-    }catch(error){
-      clearGoogleSession();
-      setGoogleProfile(null);
-      setSheets({});
-      setNotice('Не вдалося підключити Google Sheets: '+(error instanceof Error?error.message:String(error)));
-    }finally{setAuthLoading(false);}
-  };
 
   const refreshAll=async()=>{
     if(!getSelectedSpreadsheet().id){
@@ -170,84 +135,6 @@ export default function App(){
       setNotice('Щоб завантажити дані, один раз вкажіть посилання на публічну Google-таблицю кнопкою «Оновити дані». Надалі дані завантажуватимуться автоматично під час відкриття дашборду.');
     }
   },[]);
-
-  const signOut=()=>{
-    clearGoogleSession();setGoogleProfile(null);setSheets({});setTab('overview');
-    setNotice('Google Sheets відключено. Інтерфейс залишається доступним.');
-  };
-
-  const saveRecord=async(sheet:GoogleSheetTab,record:SheetRecord)=>{
-    if(!googleProfile)throw new Error('Спочатку підключіть Google Sheets.');
-    const table=sheets[sheet];
-    if(!table?.headers.length)throw new Error('Не знайдено заголовки колонок на аркуші '+sheet+'.');
-    const values=table.headers.map(header=>record[header]??'');
-    await appendSheetRows(sheet,table.headers,[values]);
-    const updated=await readSheetTable(sheet);
-    setSheets(previous=>({...previous,[sheet]:updated}));
-  };
-
-  const addGenericRecord=async(event:FormEvent)=>{
-    event.preventDefault();
-    if(!googleProfile){setNotice('Спочатку підключіть Google Sheets, щоб записувати дані.');return;}
-    if(!activeSheet)return;
-    setSaving(true);
-    try{
-      await saveRecord(activeSheet,draft);
-      setDraft({});setShowForm(false);setNotice('Новий запис додано до аркуша '+activeSheet+'.');
-    }catch(error){setNotice('Не вдалося записати дані: '+(error instanceof Error?error.message:String(error)));}
-    finally{setSaving(false);}
-  };
-
-  const importAst=async(file?:File)=>{
-    if(!file)return;
-    if(!googleProfile){setNotice('Спочатку підключіть Google Sheets, щоб імпортувати дані.');return;}
-    setSaving(true);
-    try{
-      const workbook=XLSX.read(await file.arrayBuffer(),{type:'array'});
-      const worksheet=workbook.Sheets[workbook.SheetNames[0]];
-      const raw=XLSX.utils.sheet_to_json<SheetRecord>(worksheet,{defval:''});
-      if(!raw.length)throw new Error('У файлі немає рядків даних.');
-      if(tab==='wgs'){
-        const table=sheets.WGS_Staging;
-        if(!table?.headers.length)throw new Error('Аркуш WGS_Staging не має заголовків.');
-        const sourceHeaders=Object.keys(raw[0]||{});
-        const requiredWgs=['Sample_ID','Isolate_ID','Sequencing_Date','Sequencing_Platform'];
-        const missing=requiredWgs.filter(header=>!sourceHeaders.some(key=>norm(key)===norm(header)));
-        if(missing.length)throw new Error('У WGS Excel відсутні обов’язкові колонки: '+missing.join(', '));
-        const rows=raw.map((record,index)=>{
-          const normalized=Object.fromEntries(Object.entries(record).map(([key,value])=>[norm(key),String(value??'')]));
-          if(!normalized.sampleid||!normalized.isolateid||!normalized.sequencingdate||!normalized.sequencingplatform){
-            throw new Error('Рядок '+(index+2)+': Sample_ID, Isolate_ID, Sequencing_Date та Sequencing_Platform обов’язкові.');
-          }
-          return table.headers.map(header=>normalized[norm(header)]??'');
-        });
-        await appendSheetRows('WGS_Staging',table.headers,rows);
-        const updated=await readSheetTable('WGS_Staging');
-        setSheets(previous=>({...previous,WGS_Staging:updated}));
-        setNotice('Імпортовано '+rows.length+' результатів WGS безпосередньо до Google Sheets.');
-        setTab('wgs');
-        return;
-      }
-      const sourceHeaders=Object.keys(raw[0]||{});
-      const missing=AST_HEADERS.filter(header=>!sourceHeaders.some(key=>norm(key)===norm(header)));
-      if(missing.length)throw new Error('В Excel відсутні обов’язкові колонки: '+missing.join(', '));
-      const normalized=raw.map(item=>{
-        const row=parseAst(Object.fromEntries(Object.entries(item).map(([k,v])=>[k,String(v??'')])));
-        if(REQUIRED_AST.some(key=>!row[key]))throw new Error('Є рядок без обов’язкового поля '+REQUIRED_AST.find(key=>!row[key])+'.');
-        if(row.SIR_Category&&!['S','I','R'].includes(row.SIR_Category.toUpperCase()))throw new Error('SIR_Category має містити S, I або R.');
-        row.SIR_Category=row.SIR_Category.toUpperCase();
-        return row;
-      });
-      const table=sheets.AST_Data;
-      if(!table?.headers.length)throw new Error('Аркуш AST_Data не має заголовків.');
-      await appendSheetRows('AST_Data',table.headers,normalized.map(row=>table.headers.map(header=>String((row as unknown as SheetRecord)[header]??''))));
-      const updated=await readSheetTable('AST_Data');
-      setSheets(previous=>({...previous,AST_Data:updated}));
-      setNotice('Імпортовано '+normalized.length+' результатів безпосередньо до Google Sheets.');
-      setTab('amr');
-    }catch(error){setNotice('Імпорт відхилено: '+(error instanceof Error?error.message:String(error)));}
-    finally{setSaving(false);}
-  };
 
   const exportAst=()=>{
     const workbook=XLSX.utils.book_new();
@@ -283,20 +170,20 @@ export default function App(){
     <aside className={'sidebar '+(mobile?'open':'')}>
       <div className="brand"><div className="brandmark"><ShieldCheck/></div><div><b>ТЕРНОПІЛЬСЬКИЙ ОЦКПХ</b><small>IPC & AMR MONITORING</small></div><button className="close" onClick={()=>setMobile(false)}><X/></button></div>
       <div className="sideintro">ІНФОРМАЦІЙНО-АНАЛІТИЧНА СИСТЕМА</div>
-      {['РОБОЧА ПАНЕЛЬ','ІНФЕКЦІЙНИЙ КОНТРОЛЬ','ЛАБОРАТОРНИЙ НАГЛЯД','ІНСТРУМЕНТИ','НОРМАТИВНО-ПРАВОВА БАЗА'].map(group=><div className="navgroup" key={group}><label>{group}</label>{nav.filter(item=>item.group===group).map(item=><button key={item.id} className={'nav '+(tab===item.id?'active':'')} onClick={()=>{setTab(item.id);setMobile(false);setShowForm(false);setQuery('');}}><item.icon size={17}/>{item.label}</button>)}</div>)}
-      <div className="sidebottom"><ShieldCheck size={16}/> Google Sheets · режим читання<small>Дані з публічної робочої книги</small></div>
+      {['РОБОЧА ПАНЕЛЬ','ІНФЕКЦІЙНИЙ КОНТРОЛЬ','ЛАБОРАТОРНИЙ НАГЛЯД','ІНСТРУМЕНТИ','НОРМАТИВНО-ПРАВОВА БАЗА'].map(group=><div className="navgroup" key={group}><label>{group}</label>{nav.filter(item=>item.group===group).map(item=><button key={item.id} className={'nav '+(tab===item.id?'active':'')} onClick={()=>{setTab(item.id);setMobile(false);setQuery('');}}><item.icon size={17}/>{item.label}</button>)}</div>)}
+      <div className="sidebottom"><ShieldCheck size={16}/> Google Sheets · лише читання<small>Оновлення через Google Sheets</small></div>
     </aside>
     <main>
       <header className="topbar"><button className="hamb" onClick={()=>setMobile(true)}><Menu/></button><div>IPC & AMR <span>/</span> {title}</div><div className="topright"><button className="primary" onClick={()=>void refreshAll()} disabled={loading}><RefreshCw size={16}/>{loading?'Оновлення…':'Оновити дані'}</button></div></header>
       <div className="page">
-        <div className="pagehead"><div><label>ТЕРНОПІЛЬСЬКИЙ ОБЛАСНИЙ ЦЕНТР КОНТРОЛЮ ТА ПРОФІЛАКТИКИ ХВОРОБ МОЗ УКРАЇНИ</label><h1>{tab==='overview'?'Моніторинг інфекційного контролю та AMR':title}</h1><p>{tab==='overview'?'Єдиний робочий простір. Дані завантажуються з публічної робочої Google-таблиці.':'Джерело даних: головна Google-книга IPC & AMR.'}</p></div></div>
+        <div className="pagehead"><div><label>ТЕРНОПІЛЬСЬКИЙ ОБЛАСНИЙ ЦЕНТР КОНТРОЛЮ ТА ПРОФІЛАКТИКИ ХВОРОБ МОЗ УКРАЇНИ</label><h1>{tab==='overview'?'Моніторинг інфекційного контролю та AMR':title}</h1><p>{tab==='overview'?'Єдиний робочий простір. Дані завантажуються з публічної робочої Google-книги.':'Джерело даних: головна Google-книга IPC & AMR.'}</p></div></div>
         <div className="notice"><AlertCircle size={17}/>{notice}</div>
-        {tab==='overview'&&<><div className="section"><div><h2>Робочий огляд</h2><p>Кількість записів безпосередньо в Google Sheets</p></div><span className="pill">GOOGLE SHEETS · READ ONLY</span></div><div className="metrics">{GOOGLE_SHEET_TABS.map(name=><div className="metric" key={name}><small>{name}</small><b>{sheets[name]?.rows.length??0}</b><span>рядків даних</span></div>)}</div><div className="modules">{nav.filter(item=>item.id!=='overview'&&item.id!=='imports').map(item=><button className="module" key={item.id} onClick={()=>setTab(item.id)}><div className="modicon"><item.icon/></div><div><small>GOOGLE SHEETS</small><h3>{item.label}</h3><p>Перегляд даних відповідного аркуша</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Сховище та контроль доступу</h3><p>Cloudflare D1 та внутрішня авторизація вимкнені. Google OAuth використовується лише для надання дозволу на доступ до Google Sheets API; після підключення дані читаються й записуються безпосередньо в робочу книгу.</p><p><b>Обмеження доступу:</b> Google надає права на всю книгу. Доступ визначається правами Google Drive на всю книгу. Кожен, кому надано доступ редактора до книги, може переглядати та змінювати всі її вкладки. Не використовуйте цю конструкцію як межу ізоляції для персональних або клінічно чутливих даних.</p></section></>}
+        {tab==='overview'&&<><div className="section"><div><h2>Робочий огляд</h2><p>Кількість записів безпосередньо в Google Sheets</p></div><span className="pill">GOOGLE SHEETS · READ ONLY</span></div><div className="metrics">{GOOGLE_SHEET_TABS.map(name=><div className="metric" key={name}><small>{name}</small><b>{sheets[name]?.rows.length??0}</b><span>рядків даних</span></div>)}</div><div className="modules">{nav.filter(item=>item.id!=='overview'&&item.id!=='imports').map(item=><button className="module" key={item.id} onClick={()=>setTab(item.id)}><div className="modicon"><item.icon/></div><div><small>GOOGLE SHEETS</small><h3>{item.label}</h3><p>Перегляд даних відповідного аркуша</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Сховище та контроль доступу</h3><p>Дашборд отримує дані в режимі читання з публічної Google-книги. Нові записи вносяться через Google Forms, прив’язані до цієї книги.</p><p><b>Обмеження доступу:</b> Google надає права на всю книгу. Доступ визначається правами Google Drive на всю книгу. Кожен, кому надано доступ редактора до книги, може переглядати та змінювати всі її вкладки. Не використовуйте цю конструкцію як межу ізоляції для персональних або клінічно чутливих даних.</p></section></>}
         {tab==='facilities'&&<><div className="section"><div><h2>Реєстр закладів охорони здоров’я</h2><p>Аркуш Facilities головної Google-книги</p></div><span className="pill">{facilities.length} закладів</span></div><div className="filter"><div><Search size={17}/><input value={facilityQuery} onChange={e=>setFacilityQuery(e.target.value)} placeholder="Пошук за назвою, ЄДРПОУ, районом або громадою"/></div><button className="btn" onClick={()=>void refreshAll()} disabled={loading}>Оновити</button></div><div className="metrics">{[['Заклади',facilities.length],['Громади',new Set(facilities.map(f=>f.hromada).filter(Boolean)).size],['Рівень допомоги',facilities.filter(f=>f.care_level).length],['Мережа',facilities.filter(f=>f.network_status).length]].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>з Google Sheets</span></div>)}</div><section className="panel tablepanel"><div className="paneltitle"><div><h3>Заклади Тернопільської області</h3><p>Довідник закладів із робочої Google-книги</p></div><span>{selectedFacilities.length} записів</span></div><div className="tablewrap"><table><thead><tr>{['ЄДРПОУ','Назва закладу','Район','Громада','Населений пункт','Власність','Рівень допомоги','Спроможна мережа'].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{selectedFacilities.map((f,i)=><tr key={f.edrpou||i}><td>{f.edrpou}</td><td><b>{f.name}</b></td><td>{f.district}</td><td>{f.hromada}</td><td>{f.settlement}</td><td>{f.ownership}</td><td>{f.care_level}</td><td>{f.network_status}</td></tr>)}</tbody></table>{!selectedFacilities.length&&<div className="empty">Аркуш Facilities не містить рядків або запит не повернув даних.</div>}</div></section></>}
-        {(tab==='amr'||tab==='wgs')&&<><div className="section"><div><h2>{tab==='amr'?'Моніторинг антимікробної резистентності AST':'Геномний нагляд WGS'}</h2><p>Дані з аркуша {activeSheet}</p></div>{canWrite&&<button className="primary" onClick={()=>fileRef.current?.click()}><ArrowUpFromLine size={16}/> Завантажити Excel</button>}</div><div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук у поточному аркуші"/></div><button className="btn" onClick={exportAst}><ArrowDownToLine size={16}/> Експорт AST</button><button className="btn" onClick={downloadAstTemplate}>Шаблон AST</button>{canWrite&&<button className="btn" onClick={()=>addForm(activeSheet!)}><Plus size={16}/> Додати запис</button>}</div>{tab==='amr'&&<><div className="metrics">{[['Результати AST',astRows.length],['Мікроорганізми',new Set(astRows.map(r=>r.Bacterial_Species)).size],['Категорія R',astRows.filter(r=>r.SIR_Category.toUpperCase()==='R').length],['WGS',sheets.WGS_Staging?.rows.length??0]].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>з Google Sheets</span></div>)}</div><section className="panel amr-map-panel"><div className="paneltitle"><div><h3>Територіальний розподіл результатів AMR</h3><p>Дані згруповані за територіальними громадами</p></div></div><AmrMap districtStats={districts} selectedDistrict={selectedDistrict} onSelectDistrict={name=>{setSelectedDistrict(name);setSelectedCommunity('all');}} communityStats={communities} selectedCommunity={selectedCommunity} onSelectCommunity={name=>{setSelectedCommunity(name);setSelectedDistrict('all');}}/><div className="amr-map-selection">{selectedCommunity!=='all'?'Обрана громада: '+selectedCommunity:selectedDistrict!=='all'?'Обраний район: '+selectedDistrict:'Територію не обрано'}</div></section></>}{showForm&&<form className="panel manual-panel" onSubmit={addGenericRecord}><div className="paneltitle"><div><h3>Новий запис у {activeSheet}</h3><p>Поля відповідають заголовкам активного аркуша</p></div></div><div className="manual-fields">{activeHeaders.map(header=><label key={header}>{columnLabel(header)}<input value={draft[header]||''} onChange={e=>setDraft(current=>({...current,[header]:e.target.value}))}/></label>)}</div><button className="primary" type="submit" disabled={saving}>{saving?'Запис…':'Зберегти в Google Sheets'}</button></form>}<section className="panel tablepanel"><div className="paneltitle"><div><h3>Записи {activeSheet}</h3><p>Поточні дані з робочої книги</p></div><span>{visibleRows.length} рядків</span></div><div className="tablewrap"><table><thead><tr>{activeHeaders.map(header=><th key={header}>{columnLabel(header)}</th>)}</tr></thead><tbody>{visibleRows.map((row,i)=><tr key={i}>{activeHeaders.map(header=><td key={header}>{row[header]||'—'}</td>)}</tr>)}</tbody></table>{!visibleRows.length&&<div className="empty">Дані не знайдені.</div>}</div></section></>}
-        {['visits','ipc','training','recommendations','legal'].includes(tab)&&activeSheet&&<><div className="section"><div><h2>{title}</h2><p>Робочий аркуш {activeSheet} у головній Google-книзі</p></div><span className="pill">{activeRecords.length} записів</span></div><div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук записів"/></div>{canWrite&&<button className="primary" onClick={()=>addForm(activeSheet)}><Plus size={16}/> Додати запис</button>}</div>{showForm&&<form className="panel manual-panel" onSubmit={addGenericRecord}><div className="paneltitle"><div><h3>Новий запис · {activeSheet}</h3><p>Значення буде додано безпосередньо в Google Sheets</p></div></div><div className="manual-fields">{activeHeaders.map(header=><label key={header}>{columnLabel(header)}<input value={draft[header]||''} onChange={e=>setDraft(current=>({...current,[header]:e.target.value}))}/></label>)}</div><button className="primary" disabled={saving} type="submit">Зберегти запис</button></form>}<section className="panel tablepanel"><div className="tablewrap"><table><thead><tr>{activeHeaders.map(header=><th key={header}>{columnLabel(header)}</th>)}</tr></thead><tbody>{visibleRows.map((row,i)=><tr key={i}>{activeHeaders.map(header=><td key={header}>{row[header]||'—'}</td>)}</tr>)}</tbody></table>{!visibleRows.length&&<div className="empty">У цьому аркуші поки немає записів.</div>}</div></section></>}
-        {tab==='imports'&&<><div className="section"><div><h2>Імпорт та контроль якості даних</h2><p>Завантаження даних безпосередньо до Google Sheets</p></div></div><div className="modules">{(['AST_Data','WGS_Staging','IPC_Assessments','Training_Events','Legal_Acts'] as GoogleSheetTab[]).map(name=><button className="module" key={name} onClick={()=>{setTab(name==='AST_Data'?'amr':name==='WGS_Staging'?'wgs':name==='IPC_Assessments'?'ipc':name==='Training_Events'?'training':'legal');setShowForm(false);}}><div className="modicon"><FileSpreadsheet/></div><div><small>GOOGLE SHEETS</small><h3>{name}</h3><p>{sheets[name]?.rows.length??0} записів</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Правила роботи з чутливими даними</h3><p>Не завантажуйте ПІБ, номери медичних карт або інші прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте попередньо погоджений псевдонім. Дашборд працює в режимі читання; внесення даних здійснюється через Google Forms, прив'язані до цієї книги.</p></section></>}
-        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={event=>void importAst(event.target.files?.[0])}/>
+        {(tab==='amr'||tab==='wgs')&&<><div className="section"><div><h2>{tab==='amr'?'Моніторинг антимікробної резистентності AST':'Геномний нагляд WGS'}</h2><p>Дані з аркуша {activeSheet}</p></div></div><div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук у поточному аркуші"/></div><button className="btn" onClick={exportAst}><ArrowDownToLine size={16}/> Експорт AST</button><button className="btn" onClick={downloadAstTemplate}>Шаблон AST</button></div>{tab==='amr'&&<><div className="metrics">{[['Результати AST',astRows.length],['Мікроорганізми',new Set(astRows.map(r=>r.Bacterial_Species)).size],['Категорія R',astRows.filter(r=>r.SIR_Category.toUpperCase()==='R').length],['WGS',sheets.WGS_Staging?.rows.length??0]].map(x=><div className="metric" key={String(x[0])}><small>{x[0]}</small><b>{x[1]}</b><span>з Google Sheets</span></div>)}</div><section className="panel amr-map-panel"><div className="paneltitle"><div><h3>Територіальний розподіл результатів AMR</h3><p>Дані згруповані за територіальними громадами</p></div></div><AmrMap districtStats={districts} selectedDistrict={selectedDistrict} onSelectDistrict={name=>{setSelectedDistrict(name);setSelectedCommunity('all');}} communityStats={communities} selectedCommunity={selectedCommunity} onSelectCommunity={name=>{setSelectedCommunity(name);setSelectedDistrict('all');}}/><div className="amr-map-selection">{selectedCommunity!=='all'?'Обрана громада: '+selectedCommunity:selectedDistrict!=='all'?'Обраний район: '+selectedDistrict:'Територію не обрано'}</div></section></>}<section className="panel tablepanel"><div className="paneltitle"><div><h3>Записи {activeSheet}</h3><p>Поточні дані з робочої книги</p></div><span>{visibleRows.length} рядків</span></div><div className="tablewrap"><table><thead><tr>{activeHeaders.map(header=><th key={header}>{columnLabel(header)}</th>)}</tr></thead><tbody>{visibleRows.map((row,i)=><tr key={i}>{activeHeaders.map(header=><td key={header}>{row[header]||'—'}</td>)}</tr>)}</tbody></table>{!visibleRows.length&&<div className="empty">Дані не знайдені.</div>}</div></section></>}
+        {['visits','ipc','training','recommendations','legal'].includes(tab)&&activeSheet&&<><div className="section"><div><h2>{title}</h2><p>Робочий аркуш {activeSheet} у головній Google-книзі</p></div><span className="pill">{activeRecords.length} записів</span></div><div className="filter"><div><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Пошук записів"/></div></div><section className="panel tablepanel"><div className="tablewrap"><table><thead><tr>{activeHeaders.map(header=><th key={header}>{columnLabel(header)}</th>)}</tr></thead><tbody>{visibleRows.map((row,i)=><tr key={i}>{activeHeaders.map(header=><td key={header}>{row[header]||'—'}</td>)}</tr>)}</tbody></table>{!visibleRows.length&&<div className="empty">У цьому аркуші поки немає записів.</div>}</div></section></>}
+        {tab==='imports'&&<><div className="section"><div><h2>Внесення та контроль якості даних</h2><p>Перегляд і контроль даних; внесення — через Google Forms</p></div></div><div className="modules">{(['AST_Data','WGS_Staging','IPC_Assessments','Training_Events','Legal_Acts'] as GoogleSheetTab[]).map(name=><button className="module" key={name} onClick={()=>{setTab(name==='AST_Data'?'amr':name==='WGS_Staging'?'wgs':name==='IPC_Assessments'?'ipc':name==='Training_Events'?'training':'legal');setShowForm(false);}}><div className="modicon"><FileSpreadsheet/></div><div><small>GOOGLE SHEETS</small><h3>{name}</h3><p>{sheets[name]?.rows.length??0} записів</p></div><b>↗</b></button>)}</div><section className="panel rules"><h3>Правила роботи з чутливими даними</h3><p>Не завантажуйте ПІБ, номери медичних карт або інші прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте попередньо погоджений псевдонім. Дашборд працює в режимі читання; внесення даних здійснюється через Google Forms, прив'язані до цієї книги.</p></section></>}
+        
         <footer>ДУ «Тернопільський обласний центр контролю та профілактики хвороб МОЗ України»<span>IPC & AMR Monitoring · Google Sheets</span></footer>
       </div>
     </main>
