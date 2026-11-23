@@ -1,5 +1,5 @@
 import type { FormEvent } from 'react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowDownToLine, ArrowUpFromLine, BadgeCheck, Building2, CalendarDays, ClipboardCheck, Dna, FileSpreadsheet, FlaskConical, LayoutDashboard, LogOut, Menu, Microscope, Plus, Search, ShieldCheck, Users, X, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AmrMap } from './components/AmrMap';
@@ -62,7 +62,7 @@ export default function App(){
   const [mobile,setMobile]=useState(false);
   const [googleProfile,setGoogleProfile]=useState<GoogleProfile|null>(null);
   const [authLoading,setAuthLoading]=useState(false);
-  const [notice,setNotice]=useState('Натисніть «Оновити дані», щоб завантажити актуальні відомості з робочої Google-таблиці.');
+  const [notice,setNotice]=useState('Завантаження даних із робочої Google-таблиці…');
   const [sheets,setSheets]=useState<Partial<Record<GoogleSheetTab,SheetState>>>({});
   const [loading,setLoading]=useState(false);
   const [query,setQuery]=useState('');
@@ -130,6 +130,14 @@ export default function App(){
     }catch(error){setNotice('Не вдалося оновити Google Sheets: '+(error instanceof Error?error.message:String(error)));}
     finally{setLoading(false);}
   };
+
+  useEffect(()=>{
+    if(getSelectedSpreadsheet().id){
+      void refreshAll();
+    }else{
+      setNotice('Щоб завантажити дані, один раз вкажіть посилання на публічну Google-таблицю кнопкою «Оновити дані». Надалі дані завантажуватимуться автоматично під час відкриття дашборду.');
+    }
+  },[]);
 
   const signOut=()=>{
     clearGoogleSession();setGoogleProfile(null);setSheets({});setTab('overview');
