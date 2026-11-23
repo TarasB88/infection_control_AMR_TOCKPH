@@ -39,8 +39,8 @@ declare global {
 }
 
 const configuredClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
-let selectedSpreadsheetId = '';
-let selectedSpreadsheetName = '';
+let selectedSpreadsheetId = typeof localStorage !== 'undefined' ? (localStorage.getItem('ipc-amr-spreadsheet-id') || '') : '';
+let selectedSpreadsheetName = selectedSpreadsheetId ? 'Google Sheets · ' + selectedSpreadsheetId.slice(0, 8) + '…' : '';
 const scopes = 'openid email profile https://www.googleapis.com/auth/spreadsheets';
 let accessToken = '';
 let expiresAt = 0;
@@ -66,15 +66,14 @@ export const setSelectedSpreadsheet = (input: string): { id: string; name: strin
   }
   if (!/^[a-zA-Z0-9_-]{20,}$/.test(id)) throw new Error('Не вдалося визначити ID таблиці. Вставте повне посилання Google Sheets або коректний ID.');
   selectedSpreadsheetId = id;
+  if (typeof localStorage !== 'undefined') localStorage.setItem('ipc-amr-spreadsheet-id', id);
   selectedSpreadsheetName = 'Google Sheets · ' + id.slice(0, 8) + '…';
   return { id, name: selectedSpreadsheetName };
 };
 export const GOOGLE_SHEET_TABS = [
   'Facilities',
   'Facility_IPC_Profile',
-  'IPC_Visits',
   'IPC_Assessments',
-  'Recommendations',
   'Legal_Acts',
   'Training_Events',
   'Training_Facility_Stats',
@@ -95,6 +94,7 @@ export const clearGoogleSession = (): void => {
   accessToken = '';
   expiresAt = 0;
   selectedSpreadsheetId = '';
+  if (typeof localStorage !== 'undefined') localStorage.removeItem('ipc-amr-spreadsheet-id');
   selectedSpreadsheetName = '';
 };
 
@@ -181,28 +181,30 @@ export const getGoogleProfile = async (): Promise<GoogleProfile> => {
 const quoteSheet = (sheet: string): string => `'${sheet.replace(/'/g, "''")}'`;
 
 export const readSheetTable = async (sheet: GoogleSheetTab): Promise<{ headers: string[]; rows: SheetRecord[] }> => {
-  const range = encodeURIComponent(`${quoteSheet(sheet)}!A:ZZ`);
-  const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(requireSpreadsheetId())}/values/${range}?valueRenderOption=FORMATTED_VALUE&majorDimension=ROWS`,
-  );
-  const data = await response.json() as GoogleSheetsResponse;
-  const values = Array.isArray(data.values) ? data.values : [];
-  const headers = (values[0] || []).map(value => String(value ?? '').trim());
+  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(requireSpreadsheetId())}/gviz/tq?sheet=${encodeURIComponent(sheet)}&tqx=out:json`;
+  const response = await fetch(url, { headers: { Accept: 'text/plain' }, cache: 'no-store' });
+  if (!response.ok) throw new Error(`Не вдалося прочитати аркуш ${sheet} (HTTP ${response.status}). Перевірте, чи книга доступна для перегляду за посиланням.`);
+  const raw = await response.text();
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error(`Google Sheets не повернув дані аркуша ${sheet}. Перевірте публічний доступ до книги.`);
+  let payload: { table?: { cols?: Array<{ label?: string; id?: string }>; rows?: Array<{ c?: Array<{ v?: unknown; f?: string } | null> }> } };
+  try { payload = JSON.parse(raw.slice(start, end + 1)); }
+  catch { throw new Error(`Не вдалося розібрати відповідь Google Sheets для аркуша ${sheet}.`); }
+  const table = payload.table;
+  const headers = (table?.cols || []).map((col, index) => String(col.label || col.id || `Column_${index + 1}`).trim());
   if (!headers.length) return { headers: [], rows: [] };
-  if (headers.some(header => !header)) {
-    throw new Error(`Аркуш ${sheet}: заголовки містять порожні клітинки в першому рядку.`);
-  }
-  const normalized = headers.map(header => header.toLocaleLowerCase());
-  if (new Set(normalized).size !== normalized.length) {
+  if (new Set(headers.map(header => header.toLocaleLowerCase())).size !== headers.length) {
     throw new Error(`Аркуш ${sheet}: знайдено дублікати назв колонок.`);
   }
-  const rows = values.slice(1).filter(row => row.some(value => String(value ?? '').trim() !== '')).map(row => {
+  const rows = (table?.rows || []).map(row => {
     const record: SheetRecord = {};
     headers.forEach((header, index) => {
-      record[header] = String(row[index] ?? '').trim();
+      const cell = row.c?.[index];
+      record[header] = String(cell?.f ?? cell?.v ?? '').trim();
     });
     return record;
-  });
+  }).filter(record => Object.values(record).some(value => value !== ''));
   return { headers, rows };
 };
 
