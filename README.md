@@ -1,50 +1,45 @@
 # IPC & AMR Monitoring — Ternopil CDC
 
-Внутрішній україномовний вебзастосунок для моніторингу інфекційного контролю (IPC) та антимікробної резистентності (AMR) у закладах охорони здоров'я.
+Україномовний інформаційно-аналітичний дашборд для моніторингу інфекційного контролю (IPC) та антимікробної резистентності (AMR).
 
-## Єдине джерело даних
+## Архітектура даних
 
-- Усі робочі дані зберігаються в одній приватній книзі Google Sheets.
-- Cloudflare D1 повністю вилучено: немає binding, міграцій, SQL-запитів або D1 API.
-- Cloudflare Worker лише роздає статичний frontend.
-- Користувач входить через Google Identity Services (OAuth).
-- Браузер напряму читає та записує Google Sheets API; service account, Google client secret, private key і Apps Script не використовуються.
-- Єдиний параметр збірки Google — OAuth Client ID (`VITE_GOOGLE_CLIENT_ID`).
-- Після входу користувач вставляє URL або ID приватної Google-книги. Застосунок працює через Google Sheets API зі scope `spreadsheets`; Google-акаунт має бути доданий до книги у Drive.
+- Єдине джерело даних — робоча книга Google Sheets.
+- Дашборд читає дані з публічної книги в режимі **лише читання**.
+- Cloudflare Worker роздає статичний frontend; Cloudflare D1 не використовується.
+- Google OAuth, Google API credentials, Apps Script та серверні посередники не використовуються.
+- Внесення та редагування даних здійснюється через Google Forms, прив’язані до тієї самої книги.
+- Дашборд не створює аркуші, не додає, не оновлює та не видаляє рядки.
 
-## Робочі аркуші
+Книга має бути доступна за посиланням у режимі **Viewer / Читач**. Посилання або ID книги вводиться в дашборді один раз і зберігається в локальному сховищі браузера.
 
-`Facilities`, `Facility_IPC_Profile`, `IPC_Visits`, `IPC_Assessments`, `Recommendations`, `Training_Events`, `Training_Facility_Stats`, `AST_Data`, `WGS_Staging`, `Legal_Acts` та `Dictionaries`.
+## Аркуші, які читає дашборд
 
-Відсутні аркуші створюються автоматично, а початкові заголовки додаються лише до порожніх вкладок. Уже наявні заголовки не перезаписуються.
+`Facilities`, `Facility_IPC_Profile`, `IPC_Assessments`, `Legal_Acts`, `Training_Events`, `Training_Facility_Stats`, `AST_Data`, `WGS_Staging`, `Dictionaries`.
 
-## Налаштування Google OAuth
+Назви аркушів мають збігатися точно. Дашборд не створює відсутні вкладки.
 
-1. У Google Cloud Console створіть проєкт та увімкніть Google Sheets API.
-2. Налаштуйте OAuth consent screen.
-3. Створіть OAuth Client ID типу Web application.
-4. Додайте production origin у Authorized JavaScript origins.
-5. У GitHub → Settings → Secrets and variables → Actions → Variables створіть змінну `GOOGLE_OAUTH_CLIENT_ID` з цим Client ID.
-6. Надайте працівникам потрібні права на приватну робочу книгу Google Sheets у Google Drive. Користувач вставляє URL або ID книги під час підключення.
+## Заголовки та записи
 
-Додаткові параметри наведені в [Google Sheets setup](docs/GOOGLE_SHEETS_DIRECT_API_SETUP.md).
+- Перший рядок аркуша містить технічні ключі колонок.
+- Цей рядок використовується як заголовок і не повинен потрапляти до масиву записів.
+- Внутрішні ключі не перекладаються й не змінюються.
+- Українські назви колонок використовуються лише для відображення в інтерфейсі.
+- Повторний рядок технічних ключів, якщо він повертається джерелом як дані, відсіюється.
+- Невідомий ключ відображається як текст без підкреслень, а не губиться.
 
-## Важливе обмеження безпеки
+## Захист даних
 
-Google Sheets permissions діють на всю книгу. Кожен користувач, якому надано доступ до книги та який авторизувався, технічно може прочитати/змінити її вкладки через Google API.
-
-Не зберігайте прямі ідентифікатори пацієнтів. Для Patient_ID використовуйте заздалегідь погоджені псевдоніми. Не надавайте доступ до книги тим, кому не можна бачити всі її дані.
+Не публікуйте в книзі прямі ідентифікатори пацієнтів, ПІБ, номери медичних карт, телефони, адреси чи інші персональні/клінічно чутливі дані. Для `Patient_ID` використовуйте погоджені псевдоніми. Публічний доступ «Anyone with the link — Viewer» означає, що будь-хто з посиланням може прочитати всю книгу та її вкладки. Переконайтеся, що склад даних і налаштування доступу відповідають вимогам захисту інформації.
 
 ## Розгортання
 
-GitHub Actions запускає TypeScript/Vite build та розгортання Worker. Для Cloudflare deploy все ще потрібен Cloudflare API token як GitHub Actions secret `CLOUDFLARE_API_TOKEN`. Це токен Cloudflare deployment, не Google secret.
+GitHub Actions збирає Vite-застосунок і розгортає його в Cloudflare Workers. Для deployment потрібен GitHub Actions secret `CLOUDFLARE_API_TOKEN` із правами на Workers deployment та доступом до правильного Cloudflare account.
 
 ## Локальна розробка
 
 ```bash
 npm install
-# створіть .env.local на основі .env.example
 npm run dev
 npm run build
 ```
-
